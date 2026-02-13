@@ -1,0 +1,24 @@
+{
+  "name": "@glare/auth",
+  "type": "module",
+  "exports": {
+    ".": {
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "default": "./src/*.ts"
+    }
+  },
+  "scripts": {},
+  "dependencies": {
+    "@glare/db": "workspace:*",
+    "@glare/env": "workspace:*",
+    "better-auth": "catalog:",
+    "dotenv": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@glare/config": "workspace:*",
+    "typescript": "catalog:"
+  }
+}

@@ -1,0 +1,49 @@
+{
+  "name": "glare",
+  "private": true,
+  "workspaces": {
+    "packages": [
+      "apps/*",
+      "packages/*"
+    ],
+    "catalog": {
+      "dotenv": "^17.2.2",
+      "zod": "^4.1.13",
+      "typescript": "^5",
+      "@types/bun": "^1.3.4",
+      "better-auth": "^1.4.18"
+    }
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "check-types": "turbo check-types",
+    "dev:native": "turbo -F native dev",
+    "dev:web": "turbo -F web dev",
+    "dev:server": "turbo -F server dev",
+    "db:push": "turbo -F @glare/db db:push",
+    "db:studio": "turbo -F @glare/db db:studio",
+    "db:generate": "turbo -F @glare/db db:generate",
+    "db:migrate": "turbo -F @glare/db db:migrate",
+    "db:start": "turbo -F @glare/db db:start",
+    "db:watch": "turbo -F @glare/db db:watch",
+    "db:stop": "turbo -F @glare/db db:stop",
+    "db:down": "turbo -F @glare/db db:down",
+    "check": "oxlint && oxfmt --write"
+  },
+  "dependencies": {
+    "@glare/env": "workspace:*",
+    "dotenv": "catalog:",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@glare/config": "workspace:*",
+    "@types/bun": "catalog:",
+    "oxfmt": "^0.26.0",
+    "oxlint": "^1.41.0",
+    "turbo": "^2.6.3",
+    "typescript": "catalog:"
+  },
+  "packageManager": "bun@1.3.4"
+}

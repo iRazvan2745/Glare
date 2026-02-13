@@ -1,0 +1,3 @@
+{
+  "extends": "@glare/config/tsconfig.base.json"
+}
