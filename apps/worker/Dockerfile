@@ -1,4 +1,4 @@
-FROM rust:1.85-alpine AS builder
+FROM docker.io/library/rust:1.85-alpine AS builder
 
 WORKDIR /app
 
@@ -7,7 +7,7 @@ COPY apps/worker/src ./apps/worker/src
 
 RUN cargo build --manifest-path apps/worker/Cargo.toml --release
 
-FROM alpine:3.21 AS runner
+FROM docker.io/library/alpine:3.21 AS runner
 
 WORKDIR /app
 

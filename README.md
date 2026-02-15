@@ -74,3 +74,13 @@ glare/
 - `bun run db:migrate`: Run database migrations
 - `bun run db:studio`: Open database studio UI
 - `bun run check`: Run Oxlint and Oxfmt
+
+## Container Builds
+
+Use the repository root (`.`) as build context:
+
+```bash
+podman build -f apps/web/Dockerfile -t glare-web:local .
+podman build -f apps/server/Dockerfile -t glare-server:local .
+podman build -f apps/worker/Dockerfile -t glare-worker:local .
+```

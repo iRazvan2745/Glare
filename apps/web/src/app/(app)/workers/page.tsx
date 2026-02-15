@@ -4,7 +4,7 @@ import { Copy, Link2, Pencil, Plus, Search, Terminal, Trash2, UserRoundPlus } fr
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { parseAsBoolean, parseAsString, useQueryState } from "nuqs";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -205,7 +205,7 @@ function formatNumber(n: number) {
   return n.toLocaleString();
 }
 
-export default function WorkersPage() {
+function WorkersPageContent() {
   const router = useRouter();
   const { data: session } = authClient.useSession();
   const [workers, setWorkers] = useState<WorkerRecord[]>([]);
@@ -1364,5 +1364,20 @@ export default function WorkersPage() {
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+export default function WorkersPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-tight">Workers</h1>
+          <p className="text-sm text-muted-foreground">Loading workers...</p>
+        </div>
+      }
+    >
+      <WorkersPageContent />
+    </Suspense>
   );
 }

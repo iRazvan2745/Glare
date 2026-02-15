@@ -15,7 +15,7 @@ import {
   Timer,
   Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
@@ -1114,7 +1114,7 @@ function FileTreeView({
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
-export default function SnapshotsPage() {
+function SnapshotsPageContent() {
   const { data: session } = authClient.useSession();
   const [repositories, setRepositories] = useState<RepositoryRecord[]>([]);
   const [selectedRepositoryId, setSelectedRepositoryId] = useQueryState(
@@ -2374,5 +2374,20 @@ export default function SnapshotsPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function SnapshotsPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="space-y-4">
+          <h1 className="text-2xl font-semibold tracking-tight">Snapshots</h1>
+          <p className="text-sm text-muted-foreground">Loading snapshots...</p>
+        </div>
+      }
+    >
+      <SnapshotsPageContent />
+    </Suspense>
   );
 }

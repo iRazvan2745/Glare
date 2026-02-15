@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.4 AS builder
+FROM docker.io/oven/bun:1.3.4 AS builder
 
 WORKDIR /app
 
@@ -9,7 +9,7 @@ COPY packages ./packages
 RUN bun install --frozen-lockfile
 RUN bunx turbo run build --filter=server
 
-FROM oven/bun:1.3.4 AS runner
+FROM docker.io/oven/bun:1.3.4 AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production
