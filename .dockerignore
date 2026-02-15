@@ -1,0 +1,13 @@
+.git
+.gitignore
+.turbo
+node_modules
+**/node_modules
+**/.next/cache
+**/dist
+apps/worker/target
+.env
+.env.*
+*.log
+coverage
+.DS_Store
