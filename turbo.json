@@ -1,6 +1,6 @@
 {
   "$schema": "https://turbo.build/schema.json",
-  "ui": "tui",
+  "ui": "stream",
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -26,6 +26,9 @@
     "db:migrate": {
       "cache": false,
       "persistent": true
+    },
+    "db:repair": {
+      "cache": false
     },
     "db:studio": {
       "cache": false,

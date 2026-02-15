@@ -14,8 +14,7 @@
     "@glare/db": "workspace:*",
     "@glare/env": "workspace:*",
     "better-auth": "catalog:",
-    "dotenv": "catalog:",
-    "zod": "catalog:"
+    "dotenv": "catalog:"
   },
   "devDependencies": {
     "@glare/config": "workspace:*",

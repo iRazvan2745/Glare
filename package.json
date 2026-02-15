@@ -8,7 +8,7 @@
     ],
     "catalog": {
       "dotenv": "^17.2.2",
-      "zod": "^4.1.13",
+      "arktype": "^2.1.20",
       "typescript": "^5",
       "@types/bun": "^1.3.4",
       "better-auth": "^1.4.18"
@@ -22,10 +22,12 @@
     "dev:native": "turbo -F native dev",
     "dev:web": "turbo -F web dev",
     "dev:server": "turbo -F server dev",
-    "db:push": "turbo -F @glare/db db:push",
+    "test:web": "turbo -F web test",
+    "db:push": "cd packages/db && bun db:push",
     "db:studio": "turbo -F @glare/db db:studio",
-    "db:generate": "turbo -F @glare/db db:generate",
+    "db:generate": "cd packages/db && bun db:generate",
     "db:migrate": "turbo -F @glare/db db:migrate",
+    "db:repair": "turbo -F @glare/db db:repair",
     "db:start": "turbo -F @glare/db db:start",
     "db:watch": "turbo -F @glare/db db:watch",
     "db:stop": "turbo -F @glare/db db:stop",
@@ -34,8 +36,7 @@
   },
   "dependencies": {
     "@glare/env": "workspace:*",
-    "dotenv": "catalog:",
-    "zod": "catalog:"
+    "dotenv": "catalog:"
   },
   "devDependencies": {
     "@glare/config": "workspace:*",

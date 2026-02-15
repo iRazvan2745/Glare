@@ -1,0 +1,1 @@
+ALTER TABLE "rustic_repository" ADD COLUMN "initialized_at" timestamp;

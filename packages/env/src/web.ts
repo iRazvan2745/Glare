@@ -1,12 +1,11 @@
-import { createEnv } from "@t3-oss/env-nextjs";
-import { z } from "zod";
+function getEnv(name: string, fallback = ""): string {
+  const value = process.env[name];
+  if (!value || value.trim().length === 0) {
+    return fallback;
+  }
+  return value;
+}
 
-export const env = createEnv({
-  client: {
-    NEXT_PUBLIC_SERVER_URL: z.url(),
-  },
-  runtimeEnv: {
-    NEXT_PUBLIC_SERVER_URL: process.env.NEXT_PUBLIC_SERVER_URL,
-  },
-  emptyStringAsUndefined: true,
-});
+export const env = {
+  NEXT_PUBLIC_SERVER_URL: getEnv("NEXT_PUBLIC_SERVER_URL", "http://localhost:3000"),
+};

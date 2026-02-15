@@ -14,10 +14,11 @@
     "@glare/auth": "workspace:*",
     "@glare/db": "workspace:*",
     "@glare/env": "workspace:*",
+    "arktype": "catalog:",
     "better-auth": "catalog:",
     "dotenv": "catalog:",
-    "elysia": "^1.4.21",
-    "zod": "catalog:"
+    "drizzle-orm": "^0.45.1",
+    "elysia": "^1.4.21"
   },
   "devDependencies": {
     "@glare/config": "workspace:*",
