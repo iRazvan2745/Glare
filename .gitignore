@@ -12,3 +12,8 @@ out
 **/node_modules/
 **/dist/
 **/.turbo/
+
+
+# Local worker state / secrets
+.glare-worker/
+**/.glare-worker/
