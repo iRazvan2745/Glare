@@ -11,7 +11,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { RiArrowDownSLine, RiArrowUpSLine } from "@remixicon/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type React from "react";
@@ -81,9 +81,9 @@ export default function DashboardNavigation({ routes }: { routes: Route[] }) {
                   {!isCollapsed && hasSubRoutes && (
                     <span className="ml-auto">
                       {isOpen ? (
-                        <ChevronUp className="size-3.5" />
+                        <RiArrowUpSLine className="size-3.5" />
                       ) : (
-                        <ChevronDown className="size-3.5" />
+                        <RiArrowDownSLine className="size-3.5" />
                       )}
                     </span>
                   )}

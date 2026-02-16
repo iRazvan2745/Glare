@@ -1,25 +1,26 @@
 "use client";
 
 import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-  Circle,
-  File,
-  FileText,
-  Folder,
-  FolderOpen,
-  HardDriveDownload,
-  Loader2,
-  Shield,
-  Timer,
-  Trash2,
-} from "lucide-react";
+  RiErrorWarningLine,
+  RiArrowDownSLine,
+  RiArrowRightSLine,
+  RiFileLine,
+  RiFileTextLine,
+  RiFolderLine,
+  RiFolderOpenLine,
+  RiDownloadCloud2Line,
+  RiLoader4Line,
+  RiShieldLine,
+  RiTeamLine,
+  RiTimerLine,
+  RiDeleteBinLine,
+} from "@remixicon/react";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { DataTableFilter, useDataTableFilters, type FiltersState } from "@/components/data-table-filter";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
   Collapsible,
@@ -38,8 +39,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   Select,
-  SelectContent,
   SelectItem,
+  SelectPopup,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
@@ -47,6 +48,7 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
 import { env } from "@glare/env/web";
 import {
@@ -55,6 +57,7 @@ import {
   parseAsStringEnum,
   useQueryState,
 } from "nuqs";
+import { Spinner } from "@/components/ui/spinner";
 
 const API_BASE = "/api";
 
@@ -104,6 +107,7 @@ type SnapshotRecord = {
 
 type SnapshotWorkerAttribution = {
   snapshotId: string;
+  sourceSnapshotIds?: string[];
   snapshotShortId: string;
   snapshotTime: string | null;
   runGroupIds: string[];
@@ -115,14 +119,6 @@ type SnapshotWorkerAttribution = {
   lastRunAt: string | null;
 };
 
-type DisplaySnapshot = SnapshotRecord & {
-  sourceSnapshotIds: string[];
-  mergedWorkers: WorkerRecord[];
-  mergedRunCount: number;
-  mergedSuccessCount: number;
-  mergedFailureCount: number;
-};
-
 type SnapshotListItem =
   | {
       kind: "snapshot";
@@ -131,7 +127,7 @@ type SnapshotListItem =
       label: string;
       workerSummary: string | null;
       meta: string;
-      snapshot: DisplaySnapshot;
+      snapshot: SnapshotRecord;
     }
   | {
       kind: "running" | "pending";
@@ -518,6 +514,40 @@ function normalizeSnapshotKey(value: string) {
   return value.trim().toLowerCase();
 }
 
+function parseTimestampMs(value: string | null | undefined) {
+  if (!value) return Number.NaN;
+  const trimmed = value.trim();
+  if (!trimmed) return Number.NaN;
+
+  const candidates = new Set<string>();
+  candidates.add(trimmed);
+
+  // Normalize "YYYY-MM-DD HH:mm:ss" -> "YYYY-MM-DDTHH:mm:ss"
+  candidates.add(trimmed.replace(/^(\d{4}-\d{2}-\d{2})\s+/, "$1T"));
+
+  // Remove separator before timezone: "...ss +00:00" -> "...ss+00:00"
+  candidates.add(trimmed.replace(/\s+([+-]\d{2}:\d{2}|[+-]\d{4}|Z)$/i, "$1"));
+  candidates.add(
+    trimmed
+      .replace(/^(\d{4}-\d{2}-\d{2})\s+/, "$1T")
+      .replace(/\s+([+-]\d{2}:\d{2}|[+-]\d{4}|Z)$/i, "$1"),
+  );
+
+  for (const candidate of candidates) {
+    const parsed = Date.parse(candidate);
+    if (Number.isFinite(parsed)) return parsed;
+
+    // If timezone is missing, assume UTC and retry.
+    const hasZone = /([zZ]|[+-]\d{2}:\d{2}|[+-]\d{4})$/.test(candidate);
+    if (!hasZone) {
+      const parsedUtc = Date.parse(`${candidate}Z`);
+      if (Number.isFinite(parsedUtc)) return parsedUtc;
+    }
+  }
+
+  return Number.NaN;
+}
+
 function getSnapshotFileLoadHint(message: string) {
   const normalized = message.toLowerCase();
   if (normalized.includes("tree id") && normalized.includes("not found in index")) {
@@ -585,8 +615,6 @@ function SnapshotDetailPanel({
   snapshot,
   workers,
   runSummary,
-  selectedWorkerId,
-  onSelectedWorkerChange,
   fileTree,
   isFilesLoading,
   fileBrowserHint,
@@ -601,8 +629,6 @@ function SnapshotDetailPanel({
   snapshot: SnapshotRecord;
   workers: WorkerRecord[];
   runSummary: { runCount: number; successCount: number; failureCount: number } | null;
-  selectedWorkerId: string;
-  onSelectedWorkerChange: (workerId: string) => void;
   fileTree: FileTreeNode[];
   isFilesLoading: boolean;
   fileBrowserHint: string | null;
@@ -614,7 +640,6 @@ function SnapshotDetailPanel({
   setOpenFileNodes: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
   onForget?: (snapshotId: string) => Promise<void> | void;
 }) {
-  const selectedWorkerName = workers.find((worker) => worker.id === selectedWorkerId)?.name ?? "";
   const [isForgetDialogOpen, setIsForgetDialogOpen] = useState(false);
   const [isForgetting, setIsForgetting] = useState(false);
 
@@ -643,7 +668,7 @@ function SnapshotDetailPanel({
               disabled={isForgetting}
               onClick={() => setIsForgetDialogOpen(true)}
             >
-              <Trash2 className="mr-1.5 size-3.5" />
+              <RiDeleteBinLine className="mr-1.5 size-3.5" />
               Forget (Destructive)
             </Button>
             <AlertDialog open={isForgetDialogOpen} onOpenChange={setIsForgetDialogOpen}>
@@ -690,14 +715,14 @@ function SnapshotDetailPanel({
         <div className="relative space-y-3">
           {/* ── Snapshot operation ── */}
           <TimelineEntry
-            icon={<Shield className="size-3.5 text-amber-500" />}
+            icon={<RiShieldLine className="size-3.5 text-amber-500" />}
             title={`${formattedTime} - Snapshot`}
             subtitle={snapshot.durationLabel ? `in ${snapshot.durationLabel}` : undefined}
             defaultOpen
           >
             <Collapsible defaultOpen>
               <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs font-medium">
-                <ChevronDown className="size-3 transition-transform [[data-state=closed]>&]:rotate-[-90deg]" />
+                <RiArrowDownSLine className="size-3 transition-transform [[data-state=closed]>&]:rotate-[-90deg]" />
                 Details
               </CollapsibleTrigger>
               <CollapsibleContent>
@@ -800,36 +825,14 @@ function SnapshotDetailPanel({
             {/* Snapshot Browser */}
             <Collapsible defaultOpen className="mt-2">
               <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs font-medium">
-                <ChevronDown className="size-3 transition-transform [[data-state=closed]>&]:rotate-[-90deg]" />
+                <RiArrowDownSLine className="size-3 transition-transform [[data-state=closed]>&]:rotate-[-90deg]" />
                 Snapshot Browser
               </CollapsibleTrigger>
               <CollapsibleContent>
                 <div className="mt-2 rounded-md border bg-muted/30 p-2">
-                  <div className="mb-2">
-                    <Label className="mb-1 block text-[11px] text-muted-foreground">
-                      Show files from worker
-                    </Label>
-                    <Select
-                      value={selectedWorkerId}
-                      onValueChange={(value) => onSelectedWorkerChange(value ?? "")}
-                    >
-                      <SelectTrigger className="h-7 text-xs">
-                        <SelectValue placeholder="Choose worker">
-                          {selectedWorkerName || "Choose worker"}
-                        </SelectValue>
-                      </SelectTrigger>
-                      <SelectContent>
-                        {workers.map((worker) => (
-                          <SelectItem key={worker.id} value={worker.id}>
-                            {worker.name} ({worker.status})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
                   {fileBrowserHint && (
                     <Alert variant="warning" className="mb-2">
-                      <AlertTriangle className="size-4" />
+                      <RiErrorWarningLine className="size-4" />
                       <AlertTitle>Snapshot index issue detected</AlertTitle>
                       <AlertDescription>
                         {fileBrowserHint.split("\n").map((line) => (
@@ -853,7 +856,7 @@ function SnapshotDetailPanel({
                         </Button>
                         <Button
                           size="xs"
-                          variant="destructive-outline"
+                          variant="destructive"
                           disabled={
                             isRunningRepositoryCheck ||
                             isRunningRepositoryRepairIndex ||
@@ -870,7 +873,7 @@ function SnapshotDetailPanel({
                   )}
                   {isFilesLoading ? (
                     <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-                      <Loader2 className="size-3.5 animate-spin" />
+                      <RiLoader4Line className="size-3.5 animate-spin" />
                       Loading files...
                     </div>
                   ) : fileTree.length === 0 ? (
@@ -891,13 +894,13 @@ function SnapshotDetailPanel({
 
           {/* ── Backup operation ── */}
           <TimelineEntry
-            icon={<HardDriveDownload className="size-3.5 text-emerald-500" />}
+            icon={<RiDownloadCloud2Line className="size-3.5 text-emerald-500" />}
             title={`${formattedTime} - Backup`}
             subtitle={snapshot.durationLabel ? `in ${snapshot.durationLabel}` : undefined}
           >
             <Collapsible>
               <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs font-medium">
-                <ChevronRight className="size-3 transition-transform [[data-state=open]>&]:rotate-90" />
+                <RiArrowRightSLine className="size-3 transition-transform [[data-state=open]>&]:rotate-90" />
                 Backup Details
               </CollapsibleTrigger>
               <CollapsibleContent>
@@ -1071,22 +1074,22 @@ function FileTreeView({
             >
               {node.kind === "dir" ? (
                 <>
-                  <ChevronRight
+                  <RiArrowRightSLine
                     className={`size-3 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`}
                   />
                   {isOpen ? (
-                    <FolderOpen className="size-3.5 shrink-0 text-amber-500" />
+                    <RiFolderOpenLine className="size-3.5 shrink-0 text-amber-500" />
                   ) : (
-                    <Folder className="size-3.5 shrink-0 text-amber-500" />
+                    <RiFolderLine className="size-3.5 shrink-0 text-amber-500" />
                   )}
                 </>
               ) : (
                 <>
                   <span className="inline-block w-3 shrink-0" />
                   {node.name.endsWith(".txt") || node.name.endsWith(".md") ? (
-                    <FileText className="size-3.5 shrink-0 text-sky-500" />
+                    <RiFileTextLine className="size-3.5 shrink-0 text-sky-500" />
                   ) : (
-                    <File className="size-3.5 shrink-0 text-muted-foreground" />
+                    <RiFileLine className="size-3.5 shrink-0 text-muted-foreground" />
                   )}
                 </>
               )}
@@ -1133,6 +1136,10 @@ function SnapshotsPageContent() {
       .withDefault("tree")
       .withOptions({ history: "replace" }),
   );
+  const [snapshotWorkerFilterId, setSnapshotWorkerFilterId] = useQueryState(
+    "snapshotWorkerFilterId",
+    parseAsString.withDefault("all").withOptions({ history: "replace" }),
+  );
   const [backupPathsInput, setBackupPathsInput] = useQueryState(
     "backupPaths",
     parseAsString.withDefault("/home").withOptions({ history: "replace" }),
@@ -1158,10 +1165,6 @@ function SnapshotsPageContent() {
   );
   const [selectedActivityId, setSelectedActivityId] = useQueryState(
     "selectedActivityId",
-    parseAsString.withDefault("").withOptions({ history: "replace" }),
-  );
-  const [selectedSnapshotWorkerId, setSelectedSnapshotWorkerId] = useQueryState(
-    "selectedSnapshotWorkerId",
     parseAsString.withDefault("").withOptions({ history: "replace" }),
   );
   const [files, setFiles] = useState<FileEntry[]>([]);
@@ -1193,15 +1196,12 @@ function SnapshotsPageContent() {
 
     setIsLoading(true);
     try {
-      const response = await fetch(
-        `${API_BASE}/rustic/repositories`,
-        { credentials: "include" },
-      );
-      if (!response.ok) throw new Error("Failed to load repositories");
-
-      const data = (await response.json()) as {
+      const data = await apiFetchJson<{
         repositories?: RepositoryRecord[];
-      };
+      }>(`${API_BASE}/rustic/repositories`, {
+        method: "GET",
+        retries: 1,
+      });
       const repositoryList = data.repositories ?? [];
       setRepositories(repositoryList);
       if (repositoryList.length > 0) {
@@ -1240,24 +1240,16 @@ function SnapshotsPageContent() {
       }
 
       try {
-      const response = await fetch(
-        `${API_BASE}/rustic/repositories/${repositoryId}/snapshots`,
-        { method: "POST", credentials: "include" },
-      );
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(data?.error || "Failed to load snapshots");
-      }
-
-      const data = (await response.json()) as {
+      const data = await apiFetchJson<{
         rustic?: {
           parsedJson?: unknown;
           parsed_json?: unknown;
           stdout?: string;
         };
-      };
+      }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshots`, {
+        method: "POST",
+        retries: 1,
+      });
       const parsed =
         data.rustic?.parsedJson ??
         data.rustic?.parsed_json ??
@@ -1296,20 +1288,12 @@ function SnapshotsPageContent() {
         setIsAttributionLoading(true);
       }
       try {
-      const response = await fetch(
-        `${API_BASE}/rustic/repositories/${repositoryId}/snapshot-workers`,
-        { credentials: "include" },
-      );
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(data?.error || "Failed to load snapshot worker attribution");
-      }
-
-      const data = (await response.json()) as {
+      const data = await apiFetchJson<{
         snapshots?: SnapshotWorkerAttribution[];
-      };
+      }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshot-workers`, {
+        method: "GET",
+        retries: 1,
+      });
       setSnapshotAttribution(data.snapshots ?? []);
     } catch (error) {
         if (!silent) {
@@ -1341,20 +1325,12 @@ function SnapshotsPageContent() {
         setIsActivityLoading(true);
       }
       try {
-      const response = await fetch(
-        `${API_BASE}/rustic/repositories/${repositoryId}/snapshot-activity`,
-        { credentials: "include" },
-      );
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(data?.error || "Failed to load snapshot activity");
-      }
-
-      const data = (await response.json()) as {
+      const data = await apiFetchJson<{
         activities?: SnapshotActivity[];
-      };
+      }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshot-activity`, {
+        method: "GET",
+        retries: 1,
+      });
       setSnapshotActivity(data.activities ?? []);
     } catch (error) {
         if (!silent) {
@@ -1375,8 +1351,21 @@ function SnapshotsPageContent() {
   );
 
   const loadFiles = useCallback(
-    async (snapshotId: string, workerId: string) => {
-      if (!selectedRepositoryId || !snapshotId || !workerId) {
+    async (snapshotId: string, workerId?: string) => {
+      const normalizedSnapshotId =
+        typeof snapshotId === "string" ? snapshotId.trim() : "";
+      const normalizedWorkerId =
+        typeof workerId === "string" ? workerId.trim() : "";
+      const hasValidSnapshotId =
+        normalizedSnapshotId.length > 0 &&
+        normalizedSnapshotId !== "undefined" &&
+        normalizedSnapshotId !== "null";
+      const hasValidWorkerId =
+        normalizedWorkerId.length > 0 &&
+        normalizedWorkerId !== "undefined" &&
+        normalizedWorkerId !== "null";
+
+      if (!selectedRepositoryId || !hasValidSnapshotId) {
         setFiles([]);
         setFileBrowserHint(null);
         return;
@@ -1385,29 +1374,21 @@ function SnapshotsPageContent() {
       setIsFilesLoading(true);
       try {
         setFileBrowserHint(null);
-        const response = await fetch(
-          `${API_BASE}/rustic/repositories/${selectedRepositoryId}/snapshot/files`,
-          {
-            method: "POST",
-            credentials: "include",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ snapshot: snapshotId, workerId }),
-          },
-        );
-        if (!response.ok) {
-          const data = (await response.json().catch(() => null)) as {
-            error?: string;
-          } | null;
-          throw new Error(data?.error || "Failed to load files");
-        }
-
-        const data = (await response.json()) as {
+        const data = await apiFetchJson<{
           rustic?: {
             parsedJson?: unknown;
             parsed_json?: unknown;
             stdout?: string;
           };
-        };
+        }>(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/snapshot/files`, {
+          method: "POST",
+          body: JSON.stringify({
+            snapshot: normalizedSnapshotId,
+            ...(hasValidWorkerId ? { workerId: normalizedWorkerId } : {}),
+          }),
+          retries: 1,
+        });
+
         const parsed =
           data.rustic?.parsedJson ??
           data.rustic?.parsed_json ??
@@ -1551,11 +1532,6 @@ function SnapshotsPageContent() {
   }, [selectedRepositoryId, loadSnapshots, loadSnapshotAttribution, loadSnapshotActivity]);
 
   useEffect(() => {
-    if (!selectedSnapshotId || !selectedSnapshotWorkerId) return;
-    void loadFiles(selectedSnapshotId, selectedSnapshotWorkerId);
-  }, [selectedSnapshotId, selectedSnapshotWorkerId, loadFiles]);
-
-  useEffect(() => {
     if (!selectedRepository) {
       setManualWorkerId("");
       return;
@@ -1570,85 +1546,175 @@ function SnapshotsPageContent() {
 
   // ── Derived data ───────────────────────────────────────────────────────────
 
-  const attributionBySnapshotKey = useMemo(() => {
-    const map = new Map<string, SnapshotWorkerAttribution>();
-    for (const entry of snapshotAttribution) {
-      map.set(normalizeSnapshotKey(entry.snapshotId), entry);
-      map.set(normalizeSnapshotKey(entry.snapshotShortId), entry);
+  const snapshotWorkerFilterOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const worker of selectedRepository?.backupWorkers ?? []) {
+      byId.set(worker.id, worker.name);
     }
-    return map;
+    for (const entry of snapshotAttribution) {
+      for (const worker of entry.workers) {
+        if (!byId.has(worker.id)) {
+          byId.set(worker.id, worker.name);
+        }
+      }
+    }
+    return Array.from(byId.entries())
+      .map(([id, name]) => ({ id, name }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [selectedRepository, snapshotAttribution]);
+
+  useEffect(() => {
+    if (
+      snapshotWorkerFilterId !== "all" &&
+      !snapshotWorkerFilterOptions.some((worker) => worker.id === snapshotWorkerFilterId)
+    ) {
+      setSnapshotWorkerFilterId("all");
+    }
+  }, [snapshotWorkerFilterId, snapshotWorkerFilterOptions, setSnapshotWorkerFilterId]);
+
+  const snapshotWorkerFilterColumnsConfig = useMemo(
+    () => [
+      {
+        id: "worker",
+        accessor: (_snapshot: SnapshotRecord) => snapshotWorkerFilterId,
+        displayName: "Worker",
+        icon: RiTeamLine,
+        type: "option" as const,
+        options: snapshotWorkerFilterOptions.map((worker) => ({
+          label: worker.name,
+          value: worker.id,
+        })),
+      },
+    ],
+    [snapshotWorkerFilterId, snapshotWorkerFilterOptions],
+  );
+
+  const snapshotWorkerFilters = useMemo<FiltersState>(() => {
+    if (snapshotWorkerFilterId === "all") return [];
+    return [
+      {
+        columnId: "worker",
+        type: "option",
+        operator: "is",
+        values: [snapshotWorkerFilterId],
+      },
+    ];
+  }, [snapshotWorkerFilterId]);
+
+  const onSnapshotWorkerFiltersChange = useCallback(
+    (nextFilters: FiltersState | ((prev: FiltersState) => FiltersState)) => {
+      const resolved =
+        typeof nextFilters === "function" ? nextFilters(snapshotWorkerFilters) : nextFilters;
+      const nextWorkerId = String(
+        resolved.find((entry) => entry.columnId === "worker")?.values?.[0] ?? "all",
+      );
+      void setSnapshotWorkerFilterId(nextWorkerId);
+    },
+    [setSnapshotWorkerFilterId, snapshotWorkerFilters],
+  );
+
+  const {
+    actions: snapshotWorkerFilterActions,
+    columns: snapshotWorkerFilterColumns,
+    filters: activeSnapshotWorkerFilters,
+    strategy: snapshotWorkerFilterStrategy,
+  } = useDataTableFilters({
+    strategy: "server",
+    data: [],
+    columnsConfig: snapshotWorkerFilterColumnsConfig,
+    filters: snapshotWorkerFilters,
+    onFiltersChange: onSnapshotWorkerFiltersChange,
+  });
+
+  const attributionLookup = useMemo(() => {
+    const byFullId = new Map<string, SnapshotWorkerAttribution>();
+    const byShortId = new Map<string, SnapshotWorkerAttribution[]>();
+    const timed = [] as Array<{ entry: SnapshotWorkerAttribution; timeMs: number }>;
+
+    for (const entry of snapshotAttribution) {
+      byFullId.set(normalizeSnapshotKey(entry.snapshotId), entry);
+      for (const sourceSnapshotId of entry.sourceSnapshotIds ?? []) {
+        byFullId.set(normalizeSnapshotKey(sourceSnapshotId), entry);
+      }
+      const shortKey = normalizeSnapshotKey(entry.snapshotShortId);
+      const current = byShortId.get(shortKey) ?? [];
+      current.push(entry);
+      byShortId.set(shortKey, current);
+      const timeMs = parseTimestampMs(entry.snapshotTime);
+      if (Number.isFinite(timeMs)) {
+        timed.push({ entry, timeMs });
+      }
+    }
+
+    return { byFullId, byShortId, timed };
   }, [snapshotAttribution]);
 
-  const displaySnapshots = useMemo<DisplaySnapshot[]>(() => {
-    const groups = new Map<string, SnapshotRecord[]>();
+  const resolveAttributionForSnapshot = useCallback(
+    (snapshot: SnapshotRecord) => {
+      const full = attributionLookup.byFullId.get(normalizeSnapshotKey(snapshot.id));
+      if (full) return full;
 
-    for (const snapshot of snapshots) {
-      const attribution =
-        attributionBySnapshotKey.get(normalizeSnapshotKey(snapshot.id)) ??
-        attributionBySnapshotKey.get(normalizeSnapshotKey(snapshot.shortId)) ??
-        null;
-      const date = snapshot.time ? new Date(snapshot.time) : null;
-      const secondBucket = date
-        ? new Date(Math.floor(date.getTime() / 1_000) * 1_000).toISOString()
-        : snapshot.id;
-      const runGroupKey =
-        attribution && attribution.runGroupIds.length > 0
-          ? `rungroup:${attribution.runGroupIds.slice().sort().join(",")}`
-          : null;
-      const key = runGroupKey ? runGroupKey : secondBucket;
-      const current = groups.get(key) ?? [];
-      current.push(snapshot);
-      groups.set(key, current);
-    }
+      const shortMatches = attributionLookup.byShortId.get(normalizeSnapshotKey(snapshot.shortId)) ?? [];
+      const snapshotMs = parseTimestampMs(snapshot.time);
+      const hasSnapshotTime = Number.isFinite(snapshotMs);
 
-    const merged = Array.from(groups.values()).map((group) => {
-      const representative = group[0]!;
-      const workerMap = new Map<string, WorkerRecord>();
-      let runCount = 0;
-      let successCount = 0;
-      let failureCount = 0;
+      if (shortMatches.length === 1 && !hasSnapshotTime) return shortMatches[0]!;
 
-      for (const snapshot of group) {
-        const attribution =
-          attributionBySnapshotKey.get(normalizeSnapshotKey(snapshot.id)) ??
-          attributionBySnapshotKey.get(normalizeSnapshotKey(snapshot.shortId)) ??
-          null;
-        if (!attribution) continue;
-        for (const worker of attribution.workers) {
-          workerMap.set(worker.id, worker);
-        }
-        runCount += attribution.runCount;
-        successCount += attribution.successCount;
-        failureCount += attribution.failureCount;
+      if (hasSnapshotTime) {
+        const timedCandidates =
+          shortMatches.length > 0
+            ? shortMatches
+                .map((entry) =>
+                  Number.isFinite(parseTimestampMs(entry.snapshotTime))
+                    ? { entry, timeMs: parseTimestampMs(entry.snapshotTime) }
+                    : null,
+                )
+                .filter(
+                  (
+                    candidate,
+                  ): candidate is { entry: SnapshotWorkerAttribution; timeMs: number } =>
+                    candidate !== null && Number.isFinite(candidate.timeMs),
+                )
+            : attributionLookup.timed;
+
+        const closestByTime = timedCandidates
+          .map((item) => ({
+            entry: item.entry,
+            diff: Math.abs(snapshotMs - item.timeMs),
+          }))
+          .sort((a, b) => a.diff - b.diff)[0];
+
+        if (closestByTime && closestByTime.diff <= 120_000) return closestByTime.entry;
       }
 
-      const mergedPaths = Array.from(
-        new Set(group.flatMap((snapshot) => snapshot.paths)),
-      );
+      // If ids match but timestamps are unavailable/misaligned, keep best id-based candidate.
+      return shortMatches[0] ?? null;
+    },
+    [attributionLookup],
+  );
 
-      return {
-        ...representative,
-        paths: mergedPaths,
-        sourceSnapshotIds: group.map((snapshot) => snapshot.id),
-        mergedWorkers: Array.from(workerMap.values()),
-        mergedRunCount: runCount,
-        mergedSuccessCount: successCount,
-        mergedFailureCount: failureCount,
-      } satisfies DisplaySnapshot;
+  const filteredSnapshots = useMemo(() => {
+    if (snapshotWorkerFilterId === "all") return snapshots;
+    return snapshots.filter((snapshot) => {
+      const attribution = resolveAttributionForSnapshot(snapshot);
+      return attribution ? attribution.workerIds.includes(snapshotWorkerFilterId) : false;
     });
+  }, [snapshots, snapshotWorkerFilterId, resolveAttributionForSnapshot]);
 
-    return merged.sort((a, b) => {
+  const displaySnapshots = useMemo<SnapshotRecord[]>(() => {
+    return filteredSnapshots.slice().sort((a, b) => {
       const aMs = a.time ? new Date(a.time).getTime() : 0;
       const bMs = b.time ? new Date(b.time).getTime() : 0;
       return bMs - aMs;
     });
-  }, [snapshots, attributionBySnapshotKey]);
+  }, [filteredSnapshots]);
 
   const snapshotListItems = useMemo<SnapshotListItem[]>(() => {
     const fromSnapshots: SnapshotListItem[] = displaySnapshots.map((snapshot) => {
+      const attribution = resolveAttributionForSnapshot(snapshot);
       const workerSummary =
-        snapshot.mergedWorkers.length > 0
-          ? snapshot.mergedWorkers.map((worker) => worker.name).join(", ")
+        attribution && attribution.workers.length > 0
+          ? attribution.workers.map((worker) => worker.name).join(", ")
           : null;
       return {
         kind: "snapshot",
@@ -1681,7 +1747,7 @@ function SnapshotsPageContent() {
       const bMs = b.time ? new Date(b.time).getTime() : 0;
       return bMs - aMs;
     });
-  }, [displaySnapshots, snapshotActivity]);
+  }, [displaySnapshots, resolveAttributionForSnapshot, snapshotActivity]);
 
   useEffect(() => {
     if (selectedSnapshotId && !displaySnapshots.some((snapshot) => snapshot.id === selectedSnapshotId)) {
@@ -1732,20 +1798,18 @@ function SnapshotsPageContent() {
     displaySnapshots.find((snapshot) => snapshot.id === selectedSnapshotId) ?? null;
   const selectedActivity =
     snapshotActivity.find((activity) => `activity:${activity.id}` === selectedActivityId) ?? null;
+  const selectedSnapshotAttribution = useMemo(() => {
+    if (!selectedSnapshot) return null;
+    const direct = attributionLookup.byFullId.get(normalizeSnapshotKey(selectedSnapshot.id));
+    return direct ?? resolveAttributionForSnapshot(selectedSnapshot);
+  }, [attributionLookup, resolveAttributionForSnapshot, selectedSnapshot]);
+  const selectedSnapshotWorkerId =
+    selectedSnapshotAttribution?.workerIds.find((workerId) => workerId.trim().length > 0) ?? "";
 
   useEffect(() => {
-    if (!selectedSnapshot) {
-      setSelectedSnapshotWorkerId("");
-      return;
-    }
-
-    const hasSelectedWorker = selectedSnapshot.mergedWorkers.some(
-      (worker) => worker.id === selectedSnapshotWorkerId,
-    );
-    if (!hasSelectedWorker) {
-      setSelectedSnapshotWorkerId(selectedSnapshot.mergedWorkers[0]?.id ?? "");
-    }
-  }, [selectedSnapshot, selectedSnapshotWorkerId]);
+    if (!selectedSnapshot?.id?.trim()) return;
+    void loadFiles(selectedSnapshot.id, selectedSnapshotWorkerId || undefined);
+  }, [selectedSnapshot, selectedSnapshotWorkerId, loadFiles]);
 
   const fileTree = useMemo<FileTreeNode[]>(() => {
     // Use a persistent lookup map keyed by full path so children accumulate correctly
@@ -1821,21 +1885,16 @@ function SnapshotsPageContent() {
 
     setIsRunningRepositoryCheck(true);
     try {
-      const response = await fetch(
+      await apiFetchJson(
         `${API_BASE}/rustic/repositories/${selectedRepositoryId}/check`,
         {
           method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             workerId: selectedSnapshotWorkerId || undefined,
           }),
+          retries: 1,
         },
       );
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error || "Repository check failed");
-      }
 
       toast.success("Repository check completed.");
     } catch (error) {
@@ -1853,25 +1912,20 @@ function SnapshotsPageContent() {
 
     setIsRunningRepositoryRepairIndex(true);
     try {
-      const response = await fetch(
+      await apiFetchJson(
         `${API_BASE}/rustic/repositories/${selectedRepositoryId}/repair-index`,
         {
           method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             workerId: selectedSnapshotWorkerId || undefined,
           }),
+          retries: 1,
         },
       );
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error || "Repository index repair failed");
-      }
 
       toast.success("Repository index repair completed.");
-      if (selectedSnapshotId && selectedSnapshotWorkerId) {
-        void loadFiles(selectedSnapshotId, selectedSnapshotWorkerId);
+      if (selectedSnapshotId) {
+        void loadFiles(selectedSnapshotId, selectedSnapshotWorkerId || undefined);
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not repair repository index.");
@@ -1908,29 +1962,22 @@ function SnapshotsPageContent() {
 
     setIsTriggeringBackup(true);
     try {
-      const response = await fetch(
+      await apiFetchJson(
         `${API_BASE}/rustic/repositories/${selectedRepositoryId}/backup`,
         {
           method: "POST",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             workerId: manualWorkerId,
             paths,
             tags,
             dryRun: backupDryRun,
           }),
+          retries: 1,
         },
       );
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as {
-          error?: string;
-        } | null;
-        throw new Error(data?.error || "Failed to trigger backup");
-      }
 
       toast.success(
-        backupDryRun ? "Dry-run backup started." : "Backup started.",
+        backupDryRun ? "Dry-run snapshot started." : "Snapshot started.",
       );
       await Promise.all([
         loadSnapshots(selectedRepositoryId),
@@ -1939,7 +1986,7 @@ function SnapshotsPageContent() {
       ]);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Could not trigger backup.",
+        error instanceof Error ? error.message : "Could not trigger snapshot.",
       );
     } finally {
       setIsTriggeringBackup(false);
@@ -1966,21 +2013,19 @@ function SnapshotsPageContent() {
           if (item.kind === "snapshot") {
             setSelectedSnapshotId(item.id);
             setSelectedActivityId("");
-            setSelectedSnapshotWorkerId(item.snapshot.mergedWorkers[0]?.id ?? "");
             setOpenFileNodes({});
           } else {
             setSelectedActivityId(item.id);
             setSelectedSnapshotId("");
-            setSelectedSnapshotWorkerId(item.activity.workerId ?? "");
           }
         }}
       >
         {item.kind === "snapshot" ? (
-          <HardDriveDownload className="size-3.5 shrink-0 text-emerald-500" />
+          <RiDownloadCloud2Line className="size-3.5 shrink-0 text-emerald-500" />
         ) : item.kind === "running" ? (
-          <Loader2 className="size-3.5 shrink-0 animate-spin text-primary" />
+          <RiLoader4Line className="size-3.5 shrink-0 animate-spin text-primary" />
         ) : (
-          <Timer className="size-3.5 shrink-0 text-amber-500" />
+          <RiTimerLine className="size-3.5 shrink-0 text-amber-500" />
         )}
         <span className="truncate">{item.label}</span>
         {item.workerSummary ? (
@@ -2000,9 +2045,9 @@ function SnapshotsPageContent() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Snapshots</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">Recovery Points</h1>
         <p className="text-sm text-muted-foreground">
-          Browse and manage backup snapshots.
+          Browse and manage recovery points.
         </p>
       </div>
 
@@ -2027,13 +2072,13 @@ function SnapshotsPageContent() {
                     }
                   />
                 </SelectTrigger>
-                <SelectContent>
+                <SelectPopup>
                   {repositories.map((repository) => (
                     <SelectItem key={repository.id} value={repository.id}>
                       {repository.name} ({repository.backend})
                     </SelectItem>
                   ))}
-                </SelectContent>
+                </SelectPopup>
               </Select>
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Assigned workers:{" "}
@@ -2041,19 +2086,29 @@ function SnapshotsPageContent() {
                   ? selectedRepository.backupWorkers.map((worker) => worker.name).join(", ")
                   : "None"}
               </p>
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Last snapshot:{" "}
+                {displaySnapshots[0]?.time
+                  ? new Intl.DateTimeFormat(undefined, {
+                      dateStyle: "short",
+                      timeStyle: "short",
+                    }).format(new Date(displaySnapshots[0].time))
+                  : "—"}{" "}
+                • Count: {displaySnapshots.length}
+              </p>
             </div>
           </div>
         </div>
 
         <Collapsible>
           <CollapsibleTrigger className="flex w-full items-center gap-2 px-4 py-2 text-xs font-medium text-muted-foreground hover:text-foreground">
-            <ChevronRight className="size-3 transition-transform [[data-state=open]>&]:rotate-90" />
-            Create Backup
+            <RiArrowRightSLine className="size-3 transition-transform [[data-state=open]>&]:rotate-90" />
+            Trigger Snapshot
           </CollapsibleTrigger>
           <CollapsibleContent>
             <div className="grid gap-3 border-t px-4 py-3 lg:grid-cols-[2fr_1fr]">
               <div className="space-y-1.5">
-                <Label className="text-xs">Backup paths (one per line)</Label>
+                <Label className="text-xs">Snapshot paths (one per line)</Label>
                 <Textarea
                   className="min-h-20 font-mono text-xs"
                   value={backupPathsInput}
@@ -2073,13 +2128,13 @@ function SnapshotsPageContent() {
                       {selectedManualWorkerName || "Choose worker"}
                     </SelectValue>
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectPopup>
                     {(selectedRepository?.backupWorkers ?? []).map((worker) => (
                       <SelectItem key={worker.id} value={worker.id}>
                         {worker.name} ({worker.status})
                       </SelectItem>
                     ))}
-                  </SelectContent>
+                  </SelectPopup>
                 </Select>
                 <Label className="text-xs">Tags (comma-separated)</Label>
                 <Input
@@ -2109,7 +2164,7 @@ function SnapshotsPageContent() {
                 >
                   {isTriggeringBackup ? (
                     <>
-                      <Loader2 className="mr-1.5 size-3 animate-spin" />
+                      <RiLoader4Line className="mr-1.5 size-3 animate-spin" />
                       Running...
                     </>
                   ) : (
@@ -2127,14 +2182,14 @@ function SnapshotsPageContent() {
           <h2 className="text-sm font-semibold">Snapshot Activity</h2>
           {isActivityLoading ? (
             <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
-              <Loader2 className="size-3 animate-spin" />
+              <RiLoader4Line className="size-3 animate-spin" />
               Refreshing
             </span>
           ) : null}
         </div>
         {snapshotActivity.length === 0 ? (
           <p className="text-xs text-muted-foreground">
-            No pending or in-progress plan snapshots for this repository.
+            No pending or in-progress plan runs for this repository.
           </p>
         ) : (
           <div className="space-y-2">
@@ -2196,42 +2251,50 @@ function SnapshotsPageContent() {
       </div>
 
       {/* Split-panel explorer */}
-      <div className="flex overflow-hidden rounded-lg border bg-card" style={{ height: "calc(100vh - 300px)", minHeight: "500px" }}>
+      <div className="flex items-stretch overflow-hidden rounded-lg border bg-card" style={{ height: "calc(100vh - 300px)", minHeight: "500px" }}>
         {/* ── Left panel: snapshot tree ── */}
-        <div className="flex w-130 shrink-0 flex-col border-r">
+        <div className="flex h-full w-130 shrink-0 flex-col border-r">
           {/* Tabs */}
           <div className="border-b px-3 py-3">
-            <Tabs
-              value={viewMode}
-              onValueChange={(v) => setViewMode(v as "tree" | "list")}
-            >
-              <TabsList className="h-7 p-0.5">
-                <TabsTrigger value="tree" className="px-3 text-xs">
-                  Tree View
-                </TabsTrigger>
-                <TabsTrigger value="list" className="px-3 text-xs">
-                  List View
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
+            <div className="flex flex- gap-2">
+              <Tabs
+                value={viewMode}
+                onValueChange={(v) => setViewMode(v as "tree" | "list")}
+              >
+                <TabsList className="h-7 p-0.5">
+                  <TabsTrigger value="tree" className="px-3 text-xs">
+                    Tree View
+                  </TabsTrigger>
+                  <TabsTrigger value="list" className="px-3 text-xs">
+                    List View
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+              <DataTableFilter
+                columns={snapshotWorkerFilterColumns}
+                filters={activeSnapshotWorkerFilters}
+                actions={snapshotWorkerFilterActions}
+                strategy={snapshotWorkerFilterStrategy}
+              />
+            </div>
           </div>
 
           {/* Snapshot list */}
           <div className="flex-1 overflow-y-auto px-2 py-2">
             {isAttributionLoading ? (
               <div className="mb-2 flex items-center gap-1.5 px-1 text-[11px] text-muted-foreground">
-                <Loader2 className="size-3 animate-spin" />
+                <RiLoader4Line className="size-3 animate-spin" />
                 Loading snapshot worker attribution...
               </div>
             ) : null}
             {isSnapshotsLoading ? (
               <div className="flex items-center gap-2 py-8 text-xs text-muted-foreground">
-                <Loader2 className="size-3.5 animate-spin" />
-                Loading snapshots...
+                <Spinner />
+                Loading recovery points...
               </div>
             ) : snapshotListItems.length === 0 ? (
               <p className="py-8 text-center text-xs text-muted-foreground">
-                No snapshots available.
+                No recovery points yet. Trigger Snapshot to create the first recovery point.
               </p>
             ) : viewMode === "list" ? (
               <div className="space-y-0.5">
@@ -2257,7 +2320,7 @@ function SnapshotsPageContent() {
                           }))
                         }
                       >
-                        <ChevronRight
+                        <RiArrowRightSLine
                           className={`size-3 transition-transform ${monthOpen ? "rotate-90" : ""}`}
                         />
                         {monthNode.month}
@@ -2283,7 +2346,7 @@ function SnapshotsPageContent() {
                                     }))
                                   }
                                 >
-                                  <ChevronRight
+                                  <RiArrowRightSLine
                                     className={`size-3 transition-transform ${dayOpen ? "rotate-90" : ""}`}
                                   />
                                   {dayNode.day}
@@ -2312,22 +2375,20 @@ function SnapshotsPageContent() {
         </div>
 
         {/* ── Right panel: snapshot details ── */}
-        <div className="flex flex-1 flex-col">
+        <div className="flex h-full flex-1 flex-col">
           {selectedSnapshot ? (
             <SnapshotDetailPanel
               snapshot={selectedSnapshot}
-              workers={selectedSnapshot.mergedWorkers}
+              workers={selectedSnapshotAttribution?.workers ?? []}
               runSummary={
-                selectedSnapshot.mergedRunCount > 0
+                selectedSnapshotAttribution && selectedSnapshotAttribution.runCount > 0
                   ? {
-                      runCount: selectedSnapshot.mergedRunCount,
-                      successCount: selectedSnapshot.mergedSuccessCount,
-                      failureCount: selectedSnapshot.mergedFailureCount,
+                      runCount: selectedSnapshotAttribution.runCount,
+                      successCount: selectedSnapshotAttribution.successCount,
+                      failureCount: selectedSnapshotAttribution.failureCount,
                     }
                   : null
               }
-              selectedWorkerId={selectedSnapshotWorkerId}
-              onSelectedWorkerChange={(workerId) => setSelectedSnapshotWorkerId(workerId)}
               fileTree={fileTree}
               isFilesLoading={isFilesLoading}
               fileBrowserHint={fileBrowserHint}
@@ -2340,22 +2401,17 @@ function SnapshotsPageContent() {
               onForget={async (snapshotId) => {
                 if (!selectedRepositoryId) return;
                 try {
-                  const response = await fetch(
+                  await apiFetchJson(
                     `${API_BASE}/rustic/repositories/${selectedRepositoryId}/forget-snapshot`,
                     {
                       method: "POST",
-                      credentials: "include",
-                      headers: { "Content-Type": "application/json" },
                       body: JSON.stringify({
                         snapshotId,
                         workerId: selectedSnapshotWorkerId || undefined,
                       }),
+                      retries: 1,
                     },
                   );
-                  if (!response.ok) {
-                    const data = (await response.json().catch(() => null)) as { error?: string } | null;
-                    throw new Error(data?.error || "Failed to forget snapshot");
-                  }
                   toast.success(`Snapshot ${snapshotId.slice(0, 8)} forgotten.`);
                   void loadSnapshots(selectedRepositoryId);
                   void loadSnapshotAttribution(selectedRepositoryId);
@@ -2382,8 +2438,8 @@ export default function SnapshotsPage() {
     <Suspense
       fallback={
         <div className="space-y-4">
-          <h1 className="text-2xl font-semibold tracking-tight">Snapshots</h1>
-          <p className="text-sm text-muted-foreground">Loading snapshots...</p>
+          <h1 className="text-2xl font-semibold tracking-tight">Recovery Points</h1>
+          <p className="text-sm text-muted-foreground">Loading recovery points...</p>
         </div>
       }
     >

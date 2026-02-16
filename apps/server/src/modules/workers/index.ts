@@ -1,14 +1,20 @@
 import { db } from "@glare/db";
+import { backupPlan } from "@glare/db/schema/backup-plans";
+import { backupPlanRun } from "@glare/db/schema/backup-plan-runs";
+import { backupEvent } from "@glare/db/schema/backup-events";
+import { workerSyncEvent } from "@glare/db/schema/worker-sync-events";
 import { worker } from "@glare/db/schema/workers";
+import { and, count, desc, eq, gte } from "drizzle-orm";
 import { type } from "arktype";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Elysia } from "elysia";
 import { getAuthenticatedUser } from "../../shared/auth/session";
 import { logInfo, logWarn } from "../../shared/logger";
+import { sendDiscordNotification } from "../../shared/notifications";
 
 const workerIdType = type("string.uuid");
-const createWorkerType = type({ name: "string" });
-const updateWorkerType = type({ name: "string" });
+const createWorkerType = type({ name: "string", "region?": "string" });
+const updateWorkerType = type({ name: "string", "region?": "string | null" });
 const rotateTokenParamsType = type({ id: "string.uuid" });
 const workerParamsType = type({ id: "string.uuid" });
 const syncWorkerStatsType = type({
@@ -17,6 +23,26 @@ const syncWorkerStatsType = type({
   uptimeMs: "number.integer >= 0",
   requestsTotal: "number.integer >= 0",
   errorTotal: "number.integer >= 0",
+});
+const claimBackupRunsType = type({
+  "limit?": "number.integer >= 1",
+});
+const completeBackupRunType = type({
+  status: '"success" | "failed"',
+  "error?": "string <= 4096",
+  "durationMs?": "number.integer >= 0",
+  "snapshotId?": "string <= 512",
+  "snapshotTime?": "string",
+  "output?": "unknown",
+});
+const reportBackupPlanRunType = type({
+  status: '"success" | "failed"',
+  "error?": "string <= 4096",
+  "durationMs?": "number.integer >= 0",
+  "snapshotId?": "string <= 512",
+  "snapshotTime?": "string",
+  "nextRunAt?": "string",
+  "output?": "unknown",
 });
 
 const createWorkerSchema = {
@@ -29,7 +55,11 @@ const createWorkerSchema = {
     if (name.length < 1 || name.length > 120) {
       return { success: false as const };
     }
-    return { success: true as const, data: { name } };
+    const region = data.region?.trim() || null;
+    if (region && region.length > 120) {
+      return { success: false as const };
+    }
+    return { success: true as const, data: { name, region } };
   },
 };
 const updateWorkerSchema = {
@@ -42,7 +72,11 @@ const updateWorkerSchema = {
     if (name.length < 1 || name.length > 120) {
       return { success: false as const };
     }
-    return { success: true as const, data: { name } };
+    const region = data.region === null ? null : (data.region?.trim() || undefined);
+    if (region && region.length > 120) {
+      return { success: false as const };
+    }
+    return { success: true as const, data: { name, region } };
   },
 };
 const workerIdSchema = {
@@ -77,9 +111,61 @@ const syncWorkerStatsSchema = {
     return { success: true as const, data: input as typeof syncWorkerStatsType.infer };
   },
 };
+const claimBackupRunsSchema = {
+  safeParse(input: unknown) {
+    if (!claimBackupRunsType.allows(input ?? {})) {
+      return { success: false as const };
+    }
+    return {
+      success: true as const,
+      data: (input ?? {}) as typeof claimBackupRunsType.infer,
+    };
+  },
+};
+const completeBackupRunSchema = {
+  safeParse(input: unknown) {
+    if (!completeBackupRunType.allows(input ?? {})) {
+      return { success: false as const };
+    }
+    const data = (input ?? {}) as typeof completeBackupRunType.infer;
+    if (data.snapshotTime) {
+      const parsed = new Date(data.snapshotTime);
+      if (Number.isNaN(parsed.getTime())) {
+        return { success: false as const };
+      }
+    }
+    return { success: true as const, data };
+  },
+};
+const reportBackupPlanRunSchema = {
+  safeParse(input: unknown) {
+    if (!reportBackupPlanRunType.allows(input ?? {})) {
+      return { success: false as const };
+    }
+    const data = (input ?? {}) as typeof reportBackupPlanRunType.infer;
+    if (data.snapshotTime) {
+      const parsed = new Date(data.snapshotTime);
+      if (Number.isNaN(parsed.getTime())) {
+        return { success: false as const };
+      }
+    }
+    if (data.nextRunAt) {
+      const parsed = new Date(data.nextRunAt);
+      if (Number.isNaN(parsed.getTime())) {
+        return { success: false as const };
+      }
+    }
+    return { success: true as const, data };
+  },
+};
 
 const WORKER_ONLINE_THRESHOLD_MS = 45_000;
 const BASE32_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+
+type PlanPathsConfig = {
+  defaultPaths: string[];
+  workerPaths: Record<string, string[]>;
+};
 
 function uuidToBytes(uuid: string) {
   const normalized = uuid.replace(/-/g, "");
@@ -210,6 +296,7 @@ function verifySyncToken(token: string, expectedTokenHash: string | null) {
 function mapWorkerResponse(record: {
   id: string;
   name: string;
+  region: string | null;
   status: string;
   lastSeenAt: Date | null;
   uptimeMs: number;
@@ -221,6 +308,7 @@ function mapWorkerResponse(record: {
   return {
     id: record.id,
     name: record.name,
+    region: record.region,
     status: record.status,
     lastSeenAt: record.lastSeenAt,
     uptimeMs: record.uptimeMs,
@@ -232,6 +320,224 @@ function mapWorkerResponse(record: {
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   };
+}
+
+async function authenticateWorkerFromSyncToken(headers: Headers) {
+  const syncToken = getBearerToken(headers);
+  if (!syncToken) {
+    return null;
+  }
+
+  const workerIdFromToken = parseWorkerIdFromSyncToken(syncToken);
+  if (!workerIdFromToken) {
+    return null;
+  }
+
+  const currentWorker = await db.query.worker.findFirst({
+    where: (table, { eq }) => eq(table.id, workerIdFromToken),
+    columns: {
+      id: true,
+      syncTokenHash: true,
+    },
+  });
+
+  if (!currentWorker || !verifySyncToken(syncToken, currentWorker.syncTokenHash)) {
+    return null;
+  }
+
+  return { workerId: currentWorker.id, syncToken };
+}
+
+function parseOptionsJson(optionsJson: string | null): Record<string, string> {
+  if (!optionsJson) return {};
+  try {
+    const parsed = JSON.parse(optionsJson) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const nextOptions: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string") {
+        nextOptions[key] = value;
+      }
+    }
+    return nextOptions;
+  } catch {
+    return {};
+  }
+}
+
+function parseStringArrayJson(value: string | null): string[] {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+  } catch {
+    return [];
+  }
+}
+
+function normalizePaths(paths: string[]) {
+  return Array.from(new Set(paths.map((path) => path.trim()).filter(Boolean)));
+}
+
+function parsePlanPathsConfig(value: string | null): PlanPathsConfig {
+  if (!value) {
+    return { defaultPaths: [], workerPaths: {} };
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (Array.isArray(parsed)) {
+      return {
+        defaultPaths: normalizePaths(parsed.filter((item): item is string => typeof item === "string")),
+        workerPaths: {},
+      };
+    }
+    if (!parsed || typeof parsed !== "object") {
+      return { defaultPaths: [], workerPaths: {} };
+    }
+    const record = parsed as Record<string, unknown>;
+    const defaultPaths = Array.isArray(record.defaultPaths)
+      ? normalizePaths(record.defaultPaths.filter((item): item is string => typeof item === "string"))
+      : [];
+    const workerPaths: Record<string, string[]> = {};
+    const rawWorkerPaths = record.workerPaths;
+    if (rawWorkerPaths && typeof rawWorkerPaths === "object" && !Array.isArray(rawWorkerPaths)) {
+      for (const [workerId, workerValue] of Object.entries(rawWorkerPaths as Record<string, unknown>)) {
+        if (!Array.isArray(workerValue)) continue;
+        const nextPaths = normalizePaths(
+          workerValue.filter((item): item is string => typeof item === "string"),
+        );
+        if (nextPaths.length > 0) {
+          workerPaths[workerId] = nextPaths;
+        }
+      }
+    }
+
+    return { defaultPaths, workerPaths };
+  } catch {
+    return { defaultPaths: [], workerPaths: {} };
+  }
+}
+
+function resolvePathsForWorker(config: PlanPathsConfig, workerId: string) {
+  const workerSpecific = config.workerPaths[workerId];
+  if (workerSpecific && workerSpecific.length > 0) {
+    return workerSpecific;
+  }
+  return config.defaultPaths;
+}
+
+function hasRcloneOptions(options: Record<string, string>) {
+  return Object.keys(options).some((key) => key === "rclone.type" || key.startsWith("rclone.config."));
+}
+
+function hasLegacyS3Options(options: Record<string, string>) {
+  return Object.keys(options).some((key) => key.startsWith("s3."));
+}
+
+function enrichRcloneOptionsFromS3(options: Record<string, string>) {
+  const next = { ...options };
+  if (!next["rclone.type"]) {
+    next["rclone.type"] = "s3";
+  }
+
+  const mappings: Array<[string, string]> = [
+    ["s3.endpoint", "endpoint"],
+    ["s3.region", "region"],
+    ["s3.access-key-id", "access_key_id"],
+    ["s3.secret-access-key", "secret_access_key"],
+    ["s3.session-token", "session_token"],
+    ["s3.profile", "profile"],
+    ["s3.storage-class", "storage_class"],
+    ["s3.acl", "acl"],
+  ];
+
+  for (const [source, target] of mappings) {
+    if (!next[source]) continue;
+    const rcloneKey = `rclone.config.${target}`;
+    if (!next[rcloneKey]) {
+      next[rcloneKey] = next[source];
+    }
+  }
+
+  if (next["s3.path-style"] === "true" && !next["rclone.config.force_path_style"]) {
+    next["rclone.config.force_path_style"] = "true";
+  }
+  if (next["s3.disable-tls"] === "true" && !next["rclone.config.disable_http2"]) {
+    next["rclone.config.disable_http2"] = "true";
+  }
+  if (next["s3.no-verify-ssl"] === "true" && !next["rclone.config.no_check_certificate"]) {
+    next["rclone.config.no_check_certificate"] = "true";
+  }
+  if (!next["rclone.config.provider"]) {
+    const endpoint = next["s3.endpoint"]?.toLowerCase() || "";
+    next["rclone.config.provider"] = endpoint.includes("r2.cloudflarestorage.com")
+      ? "Cloudflare"
+      : "AWS";
+  }
+
+  return next;
+}
+
+function normalizeRcloneRepository(
+  repositoryPath: string,
+  repositoryId: string,
+  options: Record<string, string>,
+) {
+  const trimmedPath = repositoryPath.trim();
+  const remoteFromOption = options["rclone.remote"]?.trim() || null;
+
+  if (trimmedPath.startsWith("rclone:")) {
+    const rest = trimmedPath.slice("rclone:".length);
+    const separatorIndex = rest.indexOf(":");
+    const remoteFromPath = separatorIndex >= 0 ? rest.slice(0, separatorIndex).trim() : "";
+    const remote = remoteFromOption || remoteFromPath || `glare-${repositoryId.slice(0, 8)}`;
+    options["rclone.remote"] = remote;
+    return trimmedPath;
+  }
+
+  const remote = remoteFromOption || `glare-${repositoryId.slice(0, 8)}`;
+  const normalizedPath = trimmedPath.replace(/^\/+/, "");
+  options["rclone.remote"] = remote;
+  return `rclone:${remote}:${normalizedPath}`;
+}
+
+function deriveRcloneRepositoryForInit(
+  repositoryPath: string,
+  repositoryId: string,
+  options: Record<string, string>,
+) {
+  if (repositoryPath.startsWith("rclone:")) {
+    return normalizeRcloneRepository(repositoryPath, repositoryId, options);
+  }
+
+  const remote = options["rclone.remote"]?.trim() || `glare-${repositoryId.slice(0, 8)}`;
+  options["rclone.remote"] = remote;
+
+  if (repositoryPath.startsWith("s3:")) {
+    const bucketFromOptions = options["s3.bucket"]?.trim().replace(/^\/+|\/+$/g, "") || "";
+    const prefixFromOptions = options["s3.prefix"]?.trim().replace(/^\/+|\/+$/g, "") || "";
+    if (bucketFromOptions) {
+      return `rclone:${remote}:${bucketFromOptions}${prefixFromOptions ? `/${prefixFromOptions}` : ""}`;
+    }
+
+    const raw = repositoryPath.slice("s3:".length).trim();
+    let pathPart = raw;
+    try {
+      if (raw.includes("://")) {
+        pathPart = new URL(raw).pathname;
+      } else if (raw.includes("/")) {
+        pathPart = raw.slice(raw.indexOf("/"));
+      }
+    } catch {
+      pathPart = raw;
+    }
+    pathPart = pathPart.replace(/^\/+|\/+$/g, "");
+    return `rclone:${remote}:${pathPart}`;
+  }
+
+  return normalizeRcloneRepository(repositoryPath, repositoryId, options);
 }
 
 export const workerRoutes = new Elysia()
@@ -247,6 +553,7 @@ export const workerRoutes = new Elysia()
       columns: {
         id: true,
         name: true,
+        region: true,
         status: true,
         lastSeenAt: true,
         uptimeMs: true,
@@ -280,12 +587,14 @@ export const workerRoutes = new Elysia()
         id: workerId,
         userId: user.id,
         name: parsed.data.name,
+        region: parsed.data.region,
         syncTokenHash,
         syncToken,
       })
       .returning({
         id: worker.id,
         name: worker.name,
+        region: worker.region,
         status: worker.status,
         lastSeenAt: worker.lastSeenAt,
         uptimeMs: worker.uptimeMs,
@@ -334,9 +643,14 @@ export const workerRoutes = new Elysia()
       return status(404, { error: "Worker not found" });
     }
 
+    const regionClause = parsedBody.data.region !== undefined ? `, "region" = $3` : "";
+    const regionParams = parsedBody.data.region !== undefined
+      ? [parsedBody.data.name, existingWorker.id, parsedBody.data.region]
+      : [parsedBody.data.name, existingWorker.id];
+
     await db.$client.query(
-      `UPDATE "worker" SET "name" = $1, "updated_at" = NOW() WHERE "id" = $2`,
-      [parsedBody.data.name, existingWorker.id],
+      `UPDATE "worker" SET "name" = $1, "updated_at" = NOW()${regionClause} WHERE "id" = $2`,
+      regionParams,
     );
 
     const updatedWorker = await db.query.worker.findFirst({
@@ -345,6 +659,7 @@ export const workerRoutes = new Elysia()
       columns: {
         id: true,
         name: true,
+        region: true,
         status: true,
         lastSeenAt: true,
         uptimeMs: true,
@@ -401,6 +716,15 @@ export const workerRoutes = new Elysia()
 
     const hoursParam = Number(query?.hours) || 24;
     const hours = Math.max(1, Math.min(168, hoursParam));
+    const limitParam = Number(query?.limit) || 300;
+    const limit = Math.max(1, Math.min(1000, limitParam));
+    const offsetParam = Number(query?.offset) || 0;
+    const offset = Math.max(0, Math.min(50_000, offsetParam));
+    const rawStatus = typeof query?.status === "string" ? query.status.trim().toLowerCase() : "all";
+    const statusFilter =
+      rawStatus === "online" || rawStatus === "degraded" || rawStatus === "offline"
+        ? rawStatus
+        : "all";
 
     const existingWorker = await db.query.worker.findFirst({
       where: (table, { and, eq }) =>
@@ -412,48 +736,76 @@ export const workerRoutes = new Elysia()
       return status(404, { error: "Worker not found" });
     }
 
-    const result = await db.$client.query(
-      `SELECT "id", "status", "uptime_ms" AS "uptimeMs", "requests_total" AS "requestsTotal", "error_total" AS "errorTotal", "created_at" AS "createdAt"
-       FROM "worker_sync_event"
-       WHERE "worker_id" = $1 AND "created_at" >= NOW() - INTERVAL '1 hour' * $2
-       ORDER BY "created_at" ASC
-       LIMIT 5000`,
-      [existingWorker.id, hours],
-    );
+    const sinceDate = new Date(Date.now() - hours * 60 * 60 * 1000);
+    const whereClauses = [
+      eq(workerSyncEvent.workerId, existingWorker.id),
+      gte(workerSyncEvent.createdAt, sinceDate),
+    ];
 
-    return { events: result.rows };
-  })
-  .post("/api/workers/sync", async ({ request, body, status }) => {
-    const syncToken = getBearerToken(request.headers);
-    if (!syncToken) {
-      logWarn("worker sync denied: missing bearer token");
-      return status(401, { error: "Unauthorized" });
+    if (statusFilter !== "all") {
+      whereClauses.push(eq(workerSyncEvent.status, statusFilter));
     }
 
-    const workerIdFromToken = parseWorkerIdFromSyncToken(syncToken);
-    if (!workerIdFromToken) {
-      logWarn("worker sync denied: invalid token format");
+    const whereExpression = and(...whereClauses);
+
+    const [countRows, eventRowsDesc] = await Promise.all([
+      db
+        .select({ total: count() })
+        .from(workerSyncEvent)
+        .where(whereExpression),
+      db
+        .select({
+          id: workerSyncEvent.id,
+          status: workerSyncEvent.status,
+          uptimeMs: workerSyncEvent.uptimeMs,
+          requestsTotal: workerSyncEvent.requestsTotal,
+          errorTotal: workerSyncEvent.errorTotal,
+          createdAt: workerSyncEvent.createdAt,
+        })
+        .from(workerSyncEvent)
+        .where(whereExpression)
+        .orderBy(desc(workerSyncEvent.createdAt))
+        .limit(limit)
+        .offset(offset),
+    ]);
+
+    const total = Number(countRows[0]?.total ?? 0);
+    const events = [...eventRowsDesc].sort(
+      (left, right) => new Date(left.createdAt).getTime() - new Date(right.createdAt).getTime(),
+    );
+
+    return {
+      events,
+      pagination: {
+        total,
+        limit,
+        offset,
+        hasMore: offset + events.length < total,
+      },
+    };
+  })
+  .post("/api/workers/sync", async ({ request, body, status }) => {
+    const auth = await authenticateWorkerFromSyncToken(request.headers);
+    if (!auth) {
+      logWarn("worker sync denied: token verification failed");
       return status(401, { error: "Unauthorized" });
     }
 
     const parsed = syncWorkerStatsSchema.safeParse(body);
     if (!parsed.success) {
-      logWarn("worker sync rejected: invalid payload", { workerId: workerIdFromToken });
+      logWarn("worker sync rejected: invalid payload", { workerId: auth.workerId });
       return status(400, { error: "Invalid sync payload" });
     }
 
-    const currentWorker = await db.query.worker.findFirst({
-      where: (table, { eq }) => eq(table.id, workerIdFromToken),
+    const previousWorkerState = await db.query.worker.findFirst({
+      where: (table, { eq }) => eq(table.id, auth.workerId),
       columns: {
         id: true,
-        syncTokenHash: true,
+        userId: true,
+        name: true,
+        status: true,
       },
     });
-
-    if (!currentWorker || !verifySyncToken(syncToken, currentWorker.syncTokenHash)) {
-      logWarn("worker sync denied: token verification failed", { workerId: workerIdFromToken });
-      return status(401, { error: "Unauthorized" });
-    }
 
     await db.$client.query(
       `UPDATE "worker"
@@ -465,8 +817,8 @@ export const workerRoutes = new Elysia()
         parsed.data.requestsTotal,
         parsed.data.errorTotal,
         parsed.data.endpoint ?? null,
-        syncToken,
-        currentWorker.id,
+        auth.syncToken,
+        auth.workerId,
       ],
     );
 
@@ -474,7 +826,7 @@ export const workerRoutes = new Elysia()
       `INSERT INTO "worker_sync_event" ("id", "worker_id", "status", "uptime_ms", "requests_total", "error_total", "created_at")
        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())`,
       [
-        currentWorker.id,
+        auth.workerId,
         parsed.data.status,
         parsed.data.uptimeMs,
         parsed.data.requestsTotal,
@@ -483,7 +835,7 @@ export const workerRoutes = new Elysia()
     );
 
     const persistedWorker = await db.query.worker.findFirst({
-      where: (table, { eq }) => eq(table.id, currentWorker.id),
+      where: (table, { eq }) => eq(table.id, auth.workerId),
       columns: {
         endpoint: true,
         syncToken: true,
@@ -493,7 +845,7 @@ export const workerRoutes = new Elysia()
     });
 
     logInfo("worker sync updated", {
-      workerId: currentWorker.id,
+      workerId: auth.workerId,
       status: parsed.data.status,
       endpoint: parsed.data.endpoint ?? null,
       endpointPersisted: persistedWorker?.endpoint ?? null,
@@ -507,8 +859,403 @@ export const workerRoutes = new Elysia()
       errorTotal: parsed.data.errorTotal,
     });
     if (!persistedWorker?.endpoint) {
-      logWarn("worker sync persisted without endpoint", { workerId: currentWorker.id });
+      logWarn("worker sync persisted without endpoint", { workerId: auth.workerId });
     }
+
+    if (
+      previousWorkerState &&
+      previousWorkerState.status !== parsed.data.status &&
+      parsed.data.status === "degraded"
+    ) {
+      await sendDiscordNotification({
+        userId: previousWorkerState.userId,
+        category: "worker_health",
+        title: "Worker degraded",
+        message: `Worker ${previousWorkerState.name} transitioned to degraded state.`,
+        severity: "warning",
+        fields: [
+          { name: "Worker", value: previousWorkerState.name },
+          { name: "Worker ID", value: previousWorkerState.id },
+          { name: "Previous status", value: previousWorkerState.status },
+          { name: "Current status", value: parsed.data.status },
+        ],
+      });
+    }
+
+    return status(204);
+  })
+  .post("/api/workers/backup-plans/sync", async ({ request, status }) => {
+    const auth = await authenticateWorkerFromSyncToken(request.headers);
+    if (!auth) {
+      return status(401, { error: "Unauthorized" });
+    }
+
+    const rows = await db.$client.query(
+      `SELECT
+         p.id,
+         p.user_id AS "userId",
+         p.repository_id AS "repositoryId",
+         p.name,
+         p.cron,
+         p.paths_json AS "pathsJson",
+         p.tags_json AS "tagsJson",
+         p.dry_run AS "dryRun",
+         p.enabled,
+         p.updated_at AS "updatedAt",
+         r.backend,
+         r.repository,
+         r.password,
+         r.options_json AS "optionsJson"
+       FROM "backup_plan" p
+       INNER JOIN "backup_plan_worker" pw ON pw.plan_id = p.id
+       INNER JOIN "rustic_repository_backup_worker" rbw
+         ON rbw.repository_id = p.repository_id
+         AND rbw.worker_id = pw.worker_id
+       INNER JOIN "rustic_repository" r ON r.id = p.repository_id
+       WHERE pw.worker_id = $1 AND p.enabled = true
+       ORDER BY p.updated_at DESC`,
+      [auth.workerId],
+    );
+
+    const plans = (rows.rows as Array<{
+      id: string;
+      userId: string;
+      repositoryId: string;
+      name: string;
+      cron: string;
+      pathsJson: string | null;
+      tagsJson: string | null;
+      dryRun: boolean;
+      enabled: boolean;
+      updatedAt: Date | string;
+      backend: string;
+      repository: string;
+      password: string | null;
+      optionsJson: string | null;
+    }>)
+      .map((row) => {
+        const pathsConfig = parsePlanPathsConfig(row.pathsJson);
+        const paths = resolvePathsForWorker(pathsConfig, auth.workerId);
+        if (paths.length === 0) {
+          return null;
+        }
+
+        const rawOptions = parseOptionsJson(row.optionsJson);
+        const backupOptions = hasRcloneOptions(rawOptions)
+          ? rawOptions
+          : row.backend === "s3" && hasLegacyS3Options(rawOptions)
+            ? enrichRcloneOptionsFromS3(rawOptions)
+            : rawOptions;
+        const shouldForceRcloneBackup =
+          row.backend === "rclone" ||
+          (row.backend === "s3" &&
+            (hasRcloneOptions(backupOptions) || hasLegacyS3Options(backupOptions)));
+        const backend = shouldForceRcloneBackup ? "rclone" : row.backend;
+        const repository = shouldForceRcloneBackup
+          ? deriveRcloneRepositoryForInit(row.repository, row.repositoryId, backupOptions)
+          : row.repository;
+
+        return {
+          id: row.id,
+          userId: row.userId,
+          repositoryId: row.repositoryId,
+          name: row.name,
+          cron: row.cron,
+          enabled: row.enabled,
+          updatedAt: new Date(row.updatedAt).toISOString(),
+          request: {
+            backend,
+            options: backupOptions,
+            repository,
+            password: row.password ?? undefined,
+            paths,
+            tags: parseStringArrayJson(row.tagsJson),
+            dryRun: row.dryRun,
+          },
+        };
+      })
+      .filter((value): value is NonNullable<typeof value> => Boolean(value));
+
+    return { plans };
+  })
+  .post("/api/workers/backup-plans/:id/report", async ({ request, params, body, status }) => {
+    const auth = await authenticateWorkerFromSyncToken(request.headers);
+    if (!auth) {
+      return status(401, { error: "Unauthorized" });
+    }
+
+    const parsedPlanId = workerIdSchema.safeParse(params.id);
+    if (!parsedPlanId.success) {
+      return status(400, { error: "Invalid plan id" });
+    }
+
+    const parsedBody = reportBackupPlanRunSchema.safeParse(body);
+    if (!parsedBody.success) {
+      return status(400, { error: "Invalid report payload" });
+    }
+
+    const planRecord = await db.$client.query(
+      `SELECT p.id, p.user_id AS "userId", p.repository_id AS "repositoryId"
+       FROM "backup_plan" p
+       INNER JOIN "backup_plan_worker" pw ON pw.plan_id = p.id
+       WHERE p.id = $1 AND pw.worker_id = $2
+       LIMIT 1`,
+      [parsedPlanId.data, auth.workerId],
+    );
+
+    const plan = planRecord.rows[0] as
+      | {
+          id: string;
+          userId: string;
+          repositoryId: string;
+        }
+      | undefined;
+    if (!plan) {
+      return status(404, { error: "Backup plan not found for worker" });
+    }
+
+    const runId = crypto.randomUUID();
+    const startedAt = new Date(Date.now() - (parsedBody.data.durationMs ?? 0));
+    const finishedAt = new Date();
+    await db.insert(backupPlanRun).values({
+      id: runId,
+      planId: plan.id,
+      userId: plan.userId,
+      repositoryId: plan.repositoryId,
+      workerId: auth.workerId,
+      type: "backup",
+      status: parsedBody.data.status,
+      error: parsedBody.data.error ?? null,
+      durationMs: parsedBody.data.durationMs ?? null,
+      snapshotId: parsedBody.data.snapshotId ?? null,
+      snapshotTime: parsedBody.data.snapshotTime ? new Date(parsedBody.data.snapshotTime) : null,
+      outputJson: parsedBody.data.output ? JSON.stringify(parsedBody.data.output) : null,
+      startedAt,
+      finishedAt,
+    });
+
+    await db.insert(backupEvent).values({
+      id: crypto.randomUUID(),
+      userId: plan.userId,
+      repositoryId: plan.repositoryId,
+      planId: plan.id,
+      runId,
+      workerId: auth.workerId,
+      type: parsedBody.data.status === "success" ? "backup_completed" : "backup_failed",
+      status: parsedBody.data.status === "success" ? "resolved" : "open",
+      severity: parsedBody.data.status === "success" ? "info" : "error",
+      message:
+        parsedBody.data.status === "success"
+          ? "Backup completed"
+          : parsedBody.data.error || "Backup command failed",
+      detailsJson: JSON.stringify({
+        snapshotId: parsedBody.data.snapshotId ?? null,
+        snapshotTime: parsedBody.data.snapshotTime ?? null,
+      }),
+    });
+
+    if (parsedBody.data.status === "failed") {
+      await sendDiscordNotification({
+        userId: plan.userId,
+        category: "backup_failures",
+        title: "Backup plan run failed",
+        message: parsedBody.data.error || "Backup command failed",
+        severity: "error",
+        fields: [
+          { name: "Plan ID", value: plan.id },
+          { name: "Repository ID", value: plan.repositoryId },
+          { name: "Worker ID", value: auth.workerId },
+        ],
+      });
+    }
+
+    await db
+      .update(backupPlan)
+      .set({
+        lastRunAt: finishedAt,
+        lastStatus: parsedBody.data.status,
+        lastError: parsedBody.data.status === "success" ? null : (parsedBody.data.error ?? "Backup failed"),
+        lastDurationMs: parsedBody.data.durationMs ?? null,
+        nextRunAt: parsedBody.data.nextRunAt ? new Date(parsedBody.data.nextRunAt) : null,
+      })
+      .where(eq(backupPlan.id, plan.id));
+
+    return status(204);
+  })
+  .post("/api/workers/backup-runs/claim", async ({ request, body, status }) => {
+    const auth = await authenticateWorkerFromSyncToken(request.headers);
+    if (!auth) {
+      return status(401, { error: "Unauthorized" });
+    }
+
+    const parsed = claimBackupRunsSchema.safeParse(body);
+    if (!parsed.success) {
+      return status(400, { error: "Invalid claim payload" });
+    }
+    const limit = Math.max(1, Math.min(20, parsed.data.limit ?? 3));
+
+    const claimed = await db.$client.query(
+      `WITH next_runs AS (
+         SELECT "id"
+         FROM "backup_plan_run"
+         WHERE "worker_id" = $1
+           AND "status" = 'pending'
+           AND "type" = 'backup'
+         ORDER BY "started_at" ASC
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+       )
+       UPDATE "backup_plan_run" AS "run"
+       SET "status" = 'running', "started_at" = NOW()
+       FROM next_runs
+       WHERE "run"."id" = next_runs."id"
+       RETURNING
+         "run"."id",
+         "run"."plan_id" AS "planId",
+         "run"."repository_id" AS "repositoryId",
+         "run"."output_json" AS "outputJson"`,
+      [auth.workerId, limit],
+    );
+
+    const runs = [];
+    for (const row of claimed.rows as Array<{
+      id: string;
+      planId: string;
+      repositoryId: string;
+      outputJson: string | null;
+    }>) {
+      try {
+        const parsedOutput = row.outputJson ? (JSON.parse(row.outputJson) as { request?: unknown }) : {};
+        if (!parsedOutput.request || typeof parsedOutput.request !== "object") {
+          throw new Error("missing request payload");
+        }
+        runs.push({
+          id: row.id,
+          planId: row.planId,
+          repositoryId: row.repositoryId,
+          request: parsedOutput.request,
+        });
+      } catch {
+        await db.$client.query(
+          `UPDATE "backup_plan_run"
+           SET "status" = 'failed', "error" = $1, "finished_at" = NOW()
+           WHERE "id" = $2`,
+          ["Invalid queued run payload", row.id],
+        );
+      }
+    }
+
+    return { runs };
+  })
+  .post("/api/workers/backup-runs/:id/complete", async ({ request, params, body, status }) => {
+    const auth = await authenticateWorkerFromSyncToken(request.headers);
+    if (!auth) {
+      return status(401, { error: "Unauthorized" });
+    }
+
+    const parsedParams = workerIdSchema.safeParse(params.id);
+    if (!parsedParams.success) {
+      return status(400, { error: "Invalid run id" });
+    }
+
+    const parsedBody = completeBackupRunSchema.safeParse(body);
+    if (!parsedBody.success) {
+      return status(400, { error: "Invalid completion payload" });
+    }
+
+    const completedAt = new Date();
+    const completed = await db.$client.query(
+      `UPDATE "backup_plan_run"
+       SET
+         "status" = $1,
+         "error" = $2,
+         "duration_ms" = $3,
+         "snapshot_id" = $4,
+         "snapshot_time" = $5,
+         "output_json" = $6,
+         "finished_at" = $7
+       WHERE
+         "id" = $8
+         AND "worker_id" = $9
+         AND "status" = 'running'
+       RETURNING
+         "plan_id" AS "planId",
+         "run_group_id" AS "runGroupId"`,
+      [
+        parsedBody.data.status,
+        parsedBody.data.error ?? null,
+        parsedBody.data.durationMs ?? null,
+        parsedBody.data.snapshotId ?? null,
+        parsedBody.data.snapshotTime ? new Date(parsedBody.data.snapshotTime) : null,
+        parsedBody.data.output ? JSON.stringify(parsedBody.data.output) : null,
+        completedAt,
+        parsedParams.data,
+        auth.workerId,
+      ],
+    );
+
+    const completionRow = completed.rows[0] as
+      | { planId: string; runGroupId: string | null }
+      | undefined;
+    if (!completionRow) {
+      return status(404, { error: "Running backup run not found" });
+    }
+
+    if (!completionRow.runGroupId) {
+      return status(204);
+    }
+
+    const summaryResult = await db.$client.query(
+      `SELECT
+         COUNT(*)::int AS "totalCount",
+         SUM(CASE WHEN "status" = 'success' THEN 1 ELSE 0 END)::int AS "successCount",
+         SUM(CASE WHEN "status" = 'failed' THEN 1 ELSE 0 END)::int AS "failureCount",
+         SUM(CASE WHEN "status" IN ('pending', 'running') THEN 1 ELSE 0 END)::int AS "unfinishedCount",
+         MIN("started_at") AS "firstStartedAt",
+         MAX("finished_at") AS "lastFinishedAt",
+         MAX("error") FILTER (WHERE "status" = 'failed' AND "error" IS NOT NULL) AS "lastError"
+       FROM "backup_plan_run"
+       WHERE "run_group_id" = $1 AND "plan_id" = $2`,
+      [completionRow.runGroupId, completionRow.planId],
+    );
+
+    const summary = summaryResult.rows[0] as
+      | {
+          totalCount: number;
+          successCount: number;
+          failureCount: number;
+          unfinishedCount: number;
+          firstStartedAt: string | Date | null;
+          lastFinishedAt: string | Date | null;
+          lastError: string | null;
+        }
+      | undefined;
+    if (!summary || summary.unfinishedCount > 0) {
+      return status(204);
+    }
+
+    const firstStartedAt = summary.firstStartedAt ? new Date(summary.firstStartedAt) : null;
+    const lastFinishedAt = summary.lastFinishedAt ? new Date(summary.lastFinishedAt) : null;
+    const durationMs =
+      firstStartedAt && lastFinishedAt
+        ? Math.max(0, lastFinishedAt.getTime() - firstStartedAt.getTime())
+        : null;
+    const finalStatus = summary.failureCount > 0 ? "failed" : "success";
+    const finalError =
+      summary.failureCount === 0
+        ? null
+        : summary.successCount === 0
+          ? summary.lastError || "Backup failed"
+          : `${summary.failureCount}/${summary.totalCount} workers failed`;
+
+    await db
+      .update(backupPlan)
+      .set({
+        lastStatus: finalStatus,
+        lastError: finalError,
+        lastDurationMs: durationMs,
+      })
+      .where(eq(backupPlan.id, completionRow.planId));
 
     return status(204);
   })

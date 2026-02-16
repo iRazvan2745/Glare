@@ -1,0 +1,60 @@
+---
+title: Getting Started
+description: Run Glare locally with server, web, database, and worker.
+---
+
+## Prerequisites
+
+- Bun `1.3.4+`
+- PostgreSQL
+- Rust toolchain (for local worker builds)
+- `rustic` and `rclone` binaries available to workers (or use worker container image)
+
+## Install
+
+```bash
+bun install
+```
+
+## Configure Environment
+
+### Server (`apps/server/.env`)
+
+Required:
+
+- `DATABASE_URL`
+- `BETTER_AUTH_SECRET`
+- `CORS_ORIGIN`
+
+### Web (`apps/web/.env.local`)
+
+- `NEXT_PUBLIC_SERVER_URL=http://localhost:3000`
+
+## Initialize Database
+
+```bash
+bun run db:push
+```
+
+## Start Apps
+
+```bash
+bun run dev
+```
+
+## Start a Worker
+
+```bash
+worker \
+  --master-api-endpoint http://localhost:3000 \
+  --local-api-endpoint http://127.0.0.1:3001 \
+  --api-token <worker-sync-token>
+```
+
+Get the sync token when creating the worker in UI/API.
+
+## Local Ports
+
+- Server API: `3000`
+- Worker API: `3001` (example)
+- Web app: `3002`

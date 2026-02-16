@@ -1,86 +1,103 @@
-# glare
+# Glare
 
-This project was created with [Better-T-Stack](https://github.com/AmanVarshney01/create-better-t-stack), a modern TypeScript stack that combines Next.js, Elysia, and more.
+Glare is a distributed backup control plane for multi-server environments.  
+It provides a web UI, an API server, and worker agents that execute backups locally with `rustic`.
 
-## Features
+## Codebase Analysis
 
-- **TypeScript** - For type safety and improved developer experience
-- **Next.js** - Full-stack React framework
-- **TailwindCSS** - Utility-first CSS for rapid UI development
-- **shadcn/ui** - Reusable UI components
-- **Elysia** - Type-safe, high-performance framework
-- **Bun** - Runtime environment
-- **Drizzle** - TypeScript-first ORM
-- **PostgreSQL** - Database engine
-- **Authentication** - Better-Auth
-- **Oxlint** - Oxlint + Oxfmt (linting & formatting)
-- **Turborepo** - Optimized monorepo build system
+This repository is a Bun + Turborepo monorepo.
 
-## Getting Started
+### Apps
 
-First, install the dependencies:
+- `apps/server`: Elysia API server (auth, worker sync, repositories, plans, runs/events, observability).
+- `apps/web`: Next.js control plane UI.
+- `apps/docs`: Next.js docs site (Fumadocs).
+- `apps/worker`: Rust worker service (Axum) that executes backup jobs and reports status.
+
+### Shared Packages
+
+- `packages/db`: Drizzle ORM schema, SQL migrations, DB scripts.
+- `packages/auth`: Better Auth integration.
+- `packages/env`: typed environment access for server/web.
+- `packages/config`: shared TypeScript config.
+
+### Runtime Topology
+
+1. `apps/web` talks to `apps/server`.
+2. `apps/server` persists state to PostgreSQL.
+3. `apps/worker` syncs plans from `apps/server`, runs backups locally, and reports execution results.
+
+## Prerequisites
+
+- Bun `1.3.4+`
+- Docker or Podman (for local PostgreSQL via compose)
+- Rust toolchain (if building/running worker locally)
+
+## Environment
+
+Create `apps/server/.env`:
+
+```bash
+DATABASE_URL=postgresql://postgres:password@localhost:5434/glare
+BETTER_AUTH_SECRET=change-me
+CORS_ORIGIN=http://localhost:3002
+BETTER_AUTH_URL=http://localhost:3000
+```
+
+Create `apps/web/.env.local`:
+
+```bash
+NEXT_PUBLIC_SERVER_URL=http://localhost:3000
+```
+
+## Quick Start
 
 ```bash
 bun install
-```
-
-## Database Setup
-
-This project uses PostgreSQL with Drizzle ORM.
-
-1. Make sure you have a PostgreSQL database set up.
-2. Update your `apps/server/.env` file with your PostgreSQL connection details.
-
-3. Apply the schema to your database:
-
-```bash
-bun run db:push
-```
-
-Then, run the development server:
-
-```bash
+bun run db:start
 bun run dev
 ```
 
-Open [http://localhost:3001](http://localhost:3001) in your browser to see the web application.
-The API is running at [http://localhost:3000](http://localhost:3000).
+Default local ports:
 
-## Git Hooks and Formatting
+- API server: `3000`
+- Web app: `3002`
+- Postgres (compose): `5434`
 
-- Format and lint fix: `bun run check`
+## Database Migrations
 
-## Project Structure
+Server startup now applies pending Drizzle migrations automatically before serving traffic.
 
-```
-glare/
-├── apps/
-│   ├── web/         # Frontend application (Next.js)
-│   └── server/      # Backend API (Elysia)
-├── packages/
-│   ├── auth/        # Authentication configuration & logic
-│   └── db/          # Database schema & queries
-```
+- Local dev (`apps/server/src/index.ts`): migrations run on every process start.
+- Docker server image: migration SQL files are copied into the runtime image and applied on boot.
 
-## Available Scripts
-
-- `bun run dev`: Start all applications in development mode
-- `bun run build`: Build all applications
-- `bun run dev:web`: Start only the web application
-- `bun run dev:server`: Start only the server
-- `bun run check-types`: Check TypeScript types across all apps
-- `bun run db:push`: Push schema changes to database
-- `bun run db:generate`: Generate database client/types
-- `bun run db:migrate`: Run database migrations
-- `bun run db:studio`: Open database studio UI
-- `bun run check`: Run Oxlint and Oxfmt
-
-## Container Builds
-
-Use the repository root (`.`) as build context:
+Manual migration command is still available:
 
 ```bash
-podman build -f apps/web/Dockerfile -t glare-web:local .
-podman build -f apps/server/Dockerfile -t glare-server:local .
-podman build -f apps/worker/Dockerfile -t glare-worker:local .
+bun run db:migrate
+```
+
+## Useful Commands
+
+```bash
+# all dev tasks through turbo
+bun run dev
+
+# server only
+bun run dev:server
+
+# web only
+bun run dev:web
+
+# db utilities
+bun run db:start
+bun run db:stop
+bun run db:down
+bun run db:studio
+```
+
+## Build
+
+```bash
+bun run build
 ```

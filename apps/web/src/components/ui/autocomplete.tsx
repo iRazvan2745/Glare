@@ -1,7 +1,7 @@
 "use client";
 
 import { Autocomplete as AutocompletePrimitive } from "@base-ui/react/autocomplete";
-import { ChevronsUpDownIcon, XIcon } from "lucide-react";
+import { RiExpandUpDownLine, RiCloseLine } from "@remixicon/react";
 
 import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
@@ -46,7 +46,7 @@ function AutocompleteInput({
           className,
         )}
         data-slot="autocomplete-input"
-        render={<Input nativeInput size={sizeValue} />}
+        render={<Input />}
         {...props}
       />
       {showTrigger && (
@@ -57,7 +57,7 @@ function AutocompleteInput({
           )}
         >
           <AutocompletePrimitive.Icon data-slot="autocomplete-icon">
-            <ChevronsUpDownIcon />
+            <RiExpandUpDownLine />
           </AutocompletePrimitive.Icon>
         </AutocompleteTrigger>
       )}
@@ -68,7 +68,7 @@ function AutocompleteInput({
             sizeValue === "sm" ? "end-0" : "end-0.5",
           )}
         >
-          <XIcon />
+          <RiCloseLine />
         </AutocompleteClear>
       )}
     </div>
@@ -248,7 +248,7 @@ function AutocompleteClear({
       data-slot="autocomplete-clear"
       {...props}
     >
-      <XIcon />
+      <RiCloseLine />
     </AutocompletePrimitive.Clear>
   );
 }

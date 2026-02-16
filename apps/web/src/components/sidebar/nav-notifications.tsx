@@ -11,7 +11,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { BellIcon } from "lucide-react";
+import { RiNotification3Line } from "@remixicon/react";
 
 type Notification = {
   id: string;
@@ -34,7 +34,7 @@ export function NotificationsPopover({ notifications }: { notifications: Notific
           />
         }
       >
-        <BellIcon className="size-5" />
+        <RiNotification3Line className="size-5" />
       </DropdownMenuTrigger>
       <DropdownMenuContent side="right" className="w-80 my-6">
         <DropdownMenuGroup>

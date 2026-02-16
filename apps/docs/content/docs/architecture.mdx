@@ -1,0 +1,43 @@
+---
+title: Architecture
+description: System structure and runtime responsibilities across Glare services.
+---
+
+## High-Level Topology
+
+```txt
+Web UI (Next.js)
+   |
+   v
+Server API (Elysia + Drizzle)
+   |\
+   | \-- PostgreSQL (plans, runs, workers, events)
+   |
+   \---- Worker nodes (Rust Axum)
+            \-- rustic + rclone execution
+```
+
+## Responsibilities
+
+### `apps/web`
+
+- UI for workers, repositories, plans, runs, events.
+
+### `apps/server`
+
+- Auth/session management.
+- Worker registration and heartbeat sync.
+- Plan/repository CRUD.
+- Plan sync payload generation for workers.
+- Run/event persistence from worker reports.
+
+### `apps/worker`
+
+- Sync assigned backup plans from server.
+- Evaluate cron locally.
+- Execute `rustic backup` locally.
+- Report results back to server.
+
+## Availability Model
+
+Workers can keep running schedules from last synced plans if server is temporarily unavailable.

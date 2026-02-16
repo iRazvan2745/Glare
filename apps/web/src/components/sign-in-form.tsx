@@ -1,14 +1,14 @@
 import { useForm } from "@tanstack/react-form";
 import { type } from "arktype";
 import { useRouter } from "next/navigation";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
 import { authClient } from "@/lib/auth-client";
 
-import Loader from "./loader";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
+import { Spinner } from "./ui/spinner";
 
 const signInSchema = type({
   email: "string.email",
@@ -47,7 +47,7 @@ export default function SignInForm({ onSwitchToSignUp }: { onSwitchToSignUp: () 
   });
 
   if (isPending) {
-    return <Loader />;
+    return <Spinner />;
   }
 
   return (

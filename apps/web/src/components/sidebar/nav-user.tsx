@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronUp, LogOut, Settings, UserRound } from "lucide-react";
+import { RiArrowUpSLine, RiLogoutBoxRLine, RiSettings3Line, RiUser3Line } from "@remixicon/react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -47,7 +47,7 @@ export function NavUser() {
             className="h-10 rounded-xl border bg-sidebar-accent/20 text-sidebar-foreground"
             tooltip="Sign in"
           >
-            <UserRound className="size-4" />
+            <RiUser3Line className="size-4" />
             <span>Sign in</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
@@ -79,7 +79,7 @@ export function NavUser() {
                     {user.email}
                   </span>
                 </div>
-                <ChevronUp className="ml-auto size-3.5 opacity-60" />
+                <RiArrowUpSLine className="ml-auto size-3.5 opacity-60" />
               </SidebarMenuButton>
             }
           ></DropdownMenuTrigger>
@@ -106,11 +106,11 @@ export function NavUser() {
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuItem onClick={() => router.push("/users")}>
-                <UserRound />
+                <RiUser3Line />
                 Profile
               </DropdownMenuItem>
               <DropdownMenuItem onClick={() => router.push("/settings")}>
-                <Settings />
+                <RiSettings3Line />
                 Settings
               </DropdownMenuItem>
             </DropdownMenuGroup>
@@ -125,7 +125,7 @@ export function NavUser() {
                 })
               }
             >
-              <LogOut />
+              <RiLogoutBoxRLine />
               Sign out
             </DropdownMenuItem>
           </DropdownMenuContent>

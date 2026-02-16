@@ -15,6 +15,7 @@ export const worker = pgTable(
     syncTokenHash: text("sync_token_hash"),
     syncToken: text("sync_token"),
     endpoint: text("endpoint"),
+    region: text("region"),
     status: text("status").default("offline").notNull(),
     lastSeenAt: timestamp("last_seen_at"),
     uptimeMs: bigint("uptime_ms", { mode: "number" }).default(0).notNull(),

@@ -31,6 +31,11 @@ export async function apiFetchJson<T>(input: RequestInfo | URL, options: ApiFetc
     ...init
   } = options;
 
+  const headers = new Headers(init.headers);
+  if (typeof init.body === "string" && !headers.has("content-type")) {
+    headers.set("content-type", "application/json");
+  }
+
   let lastError: unknown = null;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
     const controller = new AbortController();
@@ -38,6 +43,7 @@ export async function apiFetchJson<T>(input: RequestInfo | URL, options: ApiFetc
     try {
       const response = await fetch(input, {
         ...init,
+        headers,
         credentials,
         signal: controller.signal,
       });

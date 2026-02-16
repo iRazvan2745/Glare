@@ -1,0 +1,34 @@
+---
+title: Glare
+description: Centralized multi-worker backup orchestration for self-hosted infrastructure.
+---
+
+Glare is a monorepo application for orchestrating backups across multiple worker nodes.
+
+## What Glare Includes
+
+- `apps/web`: Next.js app for admin UI.
+- `apps/server`: Elysia API for auth, worker management, plans, and orchestration.
+- `apps/worker`: Rust + Axum service that executes backup commands locally.
+- `packages/db`: Drizzle schema + migrations for all persistent state.
+- `packages/auth` and `packages/env`: shared auth and config utilities.
+
+## Backup Execution Model (Current)
+
+Backup jobs are **scheduled and executed by workers** from synced plans:
+
+1. Workers sync assigned backup plans from server.
+2. Workers evaluate cron locally.
+3. Workers execute `rustic backup` locally when due.
+4. Workers report run results back to server.
+
+This lets workers continue running schedules even if the server is temporarily unavailable.
+
+## Read Next
+
+<Cards>
+  <Card title="Getting Started" href="/docs/getting-started" />
+  <Card title="Architecture" href="/docs/architecture" />
+  <Card title="Worker Backup Execution" href="/docs/worker-backup-execution" />
+  <Card title="Operations" href="/docs/operations" />
+</Cards>

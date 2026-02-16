@@ -1,7 +1,7 @@
 "use client";
 
 import { CartesianGrid, Line, LineChart, XAxis } from "recharts";
-import { TrendingDown, TrendingUp } from "lucide-react";
+import { RiArrowDownLine, RiArrowUpLine } from "@remixicon/react";
 import { useMemo } from "react";
 
 import {
@@ -79,9 +79,9 @@ export function DottedMultiLineChart({ buckets }: DottedMultiLineChartProps) {
               className={`border-none text-xs ${trend.up ? "bg-red-500/10 text-red-500" : "bg-emerald-500/10 text-emerald-500"}`}
             >
               {trend.up ? (
-                <TrendingUp className="size-3" />
+                <RiArrowUpLine className="size-3" />
               ) : (
-                <TrendingDown className="size-3" />
+                <RiArrowDownLine className="size-3" />
               )}
               <span>
                 {trend.up ? "+" : ""}

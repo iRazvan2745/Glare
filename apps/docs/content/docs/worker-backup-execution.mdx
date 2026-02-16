@@ -1,0 +1,26 @@
+---
+title: Worker Backup Execution
+description: Worker-owned scheduling via plan sync and local cron execution.
+---
+
+## Flow
+
+1. Worker calls `POST /api/workers/backup-plans/sync`.
+2. Server returns assigned plans with worker-ready backup request payload.
+3. Worker caches plans locally.
+4. Worker evaluates cron expressions locally.
+5. On due tick, worker runs backup.
+6. Worker reports result via `POST /api/workers/backup-plans/:id/report`.
+7. Server records run + event and updates plan status.
+
+## Worker Auth Endpoints
+
+- `POST /api/workers/sync`
+- `POST /api/workers/backup-plans/sync`
+- `POST /api/workers/backup-plans/:id/report`
+
+## Notes
+
+- Scheduler ownership is worker-side.
+- Server-side scheduler is disabled by default.
+- Result replay outbox is not implemented yet.

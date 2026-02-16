@@ -1,12 +1,14 @@
 import { cors } from "@elysiajs/cors";
+import { runMigrations } from "@glare/db";
 import { env } from "@glare/env/server";
 import { Elysia } from "elysia";
 import { authRoutes } from "./modules/auth/index";
+import { observabilityRoutes } from "./modules/observability/index";
 import { rusticRoutes } from "./modules/rustic/index";
 import { settingsRoutes } from "./modules/settings/index";
 import { statsRoutes } from "./modules/stats/index";
 import { workerRoutes } from "./modules/workers/index";
-import { getRequestId, logError, logInfo, logRequest, markRequestStart } from "./shared/logger";
+import { getRequestId, logError, logInfo, logRequest, logWarn, markRequestStart } from "./shared/logger";
 import { healthSnapshot, verifyStartupHealth } from "./shared/startup-health";
 
 const OPENAPI_DOCUMENT = {
@@ -170,6 +172,19 @@ function renderScalarHtml(openApiJsonUrl: string) {
 </html>`;
 }
 
+function getPostgresErrorCode(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null) {
+    return undefined;
+  }
+  if ("code" in error && typeof (error as { code?: unknown }).code === "string") {
+    return (error as { code: string }).code;
+  }
+  if ("cause" in error) {
+    return getPostgresErrorCode((error as { cause?: unknown }).cause);
+  }
+  return undefined;
+}
+
 const app = new Elysia()
   .onRequest(({ request }) => {
     markRequestStart(request);
@@ -215,10 +230,24 @@ const app = new Elysia()
   })
   .use(authRoutes)
   .use(settingsRoutes)
+  .use(observabilityRoutes)
   .use(statsRoutes)
   .use(workerRoutes)
   .use(rusticRoutes);
 
+try {
+  await runMigrations();
+} catch (error) {
+  const postgresCode = getPostgresErrorCode(error);
+  if (postgresCode === "42P07") {
+    logWarn("migration skipped due to existing relation", {
+      postgresCode,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } else {
+    throw error;
+  }
+}
 await verifyStartupHealth();
 
 app.listen(3000, () => {

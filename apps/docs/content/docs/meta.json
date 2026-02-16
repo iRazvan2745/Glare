@@ -1,0 +1,12 @@
+{
+  "title": "Glare",
+  "pages": [
+    "index",
+    "getting-started",
+    "architecture",
+    "worker-backup-execution",
+    "api-reference",
+    "operations",
+    "troubleshooting"
+  ]
+}

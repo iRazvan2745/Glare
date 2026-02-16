@@ -1,20 +1,18 @@
 "use client";
 
 import {
-  ChevronDown,
-  Cloud,
-  Database,
-  Eye,
-  HardDrive,
-  Loader2,
-  Pencil,
-  Plus,
-  Server,
-  Trash2,
-} from "lucide-react";
+  RiArrowDownSLine,
+  RiCloudLine,
+  RiDatabase2Line,
+  RiHardDrive2Line,
+  RiLoader4Line,
+  RiAddLine,
+  RiServerLine,
+} from "@remixicon/react";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
+import { ActionMenu, ControlPlaneEmptyState, KpiStat, SectionHeader, StatusBadge } from "@/components/control-plane";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,6 +40,8 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { apiFetchJson } from "@/lib/api-fetch";
+import { deriveHealthStatus } from "@/lib/control-plane/health";
 import { authClient } from "@/lib/auth-client";
 import { env } from "@glare/env/web";
 
@@ -108,14 +108,14 @@ type S3Preset = {
 // ─── Constants ───────────────────────────────────────────────────────────────
 
 const BACKEND_OPTIONS = [
-  { value: "s3", label: "Amazon S3 / S3-compatible", icon: Cloud },
-  { value: "local", label: "Local filesystem", icon: HardDrive },
-  { value: "b2", label: "Backblaze B2", icon: Cloud },
-  { value: "rest", label: "REST server", icon: Server },
-  { value: "webdav", label: "WebDAV", icon: Server },
-  { value: "sftp", label: "SFTP", icon: Server },
-  { value: "rclone", label: "rclone", icon: Database },
-  { value: "other", label: "Other", icon: Database },
+  { value: "s3", label: "Amazon S3 / S3-compatible", icon: RiCloudLine },
+  { value: "local", label: "Local filesystem", icon: RiHardDrive2Line },
+  { value: "b2", label: "Backblaze B2", icon: RiCloudLine },
+  { value: "rest", label: "REST server", icon: RiServerLine },
+  { value: "webdav", label: "WebDAV", icon: RiServerLine },
+  { value: "sftp", label: "SFTP", icon: RiServerLine },
+  { value: "rclone", label: "rclone", icon: RiDatabase2Line },
+  { value: "other", label: "Other", icon: RiDatabase2Line },
 ] as const;
 
 const S3_PRESETS: S3Preset[] = [
@@ -466,7 +466,7 @@ function S3ConfigForm({
             />
           }
         >
-          <ChevronDown
+          <RiArrowDownSLine
             className={`size-3.5 transition-transform ${advancedOpen ? "rotate-180" : ""}`}
           />
           Advanced options
@@ -592,6 +592,7 @@ function RepositoryForm({
 
   return (
     <div className="space-y-4 max-h-[62vh] overflow-y-auto pr-1">
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">General</p>
       {/* Name */}
       <div className="space-y-1.5">
         <Label htmlFor="repo-name" className="text-xs">
@@ -630,6 +631,7 @@ function RepositoryForm({
         </Select>
       </div>
 
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Backend</p>
       {/* S3 or generic path */}
       {form.backend === "s3" ? (
         <S3ConfigForm s3={form.s3} onChange={(s3) => update({ s3 })} disabled={disabled} />
@@ -650,6 +652,7 @@ function RepositoryForm({
 
       <Separator />
 
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Worker Linkage</p>
       {/* Worker assignment */}
       <div className="space-y-1.5">
         <Label className="text-xs">Primary worker (init/snapshots)</Label>
@@ -716,6 +719,7 @@ function RepositoryForm({
         )}
       </div>
 
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Credentials</p>
       {/* Password */}
       <div className="space-y-1.5">
         <Label htmlFor="repo-password" className="text-xs">
@@ -731,6 +735,7 @@ function RepositoryForm({
         />
       </div>
 
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Advanced</p>
       {/* Extra options */}
       <Collapsible>
         <CollapsibleTrigger
@@ -743,7 +748,7 @@ function RepositoryForm({
             />
           }
         >
-          <ChevronDown className="size-3.5" />
+          <RiArrowDownSLine className="size-3.5" />
           Extra options
         </CollapsibleTrigger>
         <CollapsibleContent className="pt-2">
@@ -781,7 +786,13 @@ function RepositoryListItem({
   onDelete: () => void;
   isInitializing: boolean;
 }) {
-  const BackendIcon = BACKEND_OPTIONS.find((b) => b.value === repo.backend)?.icon ?? Database;
+  const BackendIcon = BACKEND_OPTIONS.find((b) => b.value === repo.backend)?.icon ?? RiDatabase2Line;
+  const health = deriveHealthStatus({
+    totalWorkers: Math.max(1, repo.backupWorkers.length),
+    offlineWorkers: repo.primaryWorker && !repo.primaryWorker.isOnline ? 1 : 0,
+    unlinkedRepositories: repo.primaryWorker ? 0 : 1,
+    errorRate24h: repo.isInitialized ? 0 : 1,
+  });
 
   return (
     <div className="group flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors hover:bg-muted/40">
@@ -799,6 +810,7 @@ function RepositoryListItem({
           <Badge variant="outline" className="text-[10px] shrink-0">
             {repo.backend}
           </Badge>
+          <StatusBadge status={health} label={repo.isInitialized ? "Initialized" : "Uninitialized"} />
           {repo.hasPassword && (
             <Badge variant="secondary" className="text-[10px] shrink-0">
               encrypted
@@ -820,9 +832,10 @@ function RepositoryListItem({
           <span className="text-xs text-muted-foreground/80">
             Backup workers: {repo.backupWorkers.length}
           </span>
+          <span className="text-xs text-muted-foreground/80">Recovery points: —</span>
         </div>
       </div>
-      <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+      <div className="flex shrink-0 items-center gap-1">
         <TooltipProvider delay={200}>
           <Tooltip>
             <TooltipTrigger
@@ -838,7 +851,7 @@ function RepositoryListItem({
             >
               {isInitializing ? (
                 <span className="inline-flex items-center gap-1">
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <RiLoader4Line className="size-3.5 animate-spin" />
                   Initializing
                 </span>
               ) : (
@@ -853,37 +866,14 @@ function RepositoryListItem({
                   : "Initialize this repository via its primary worker"}
             </TooltipContent>
           </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={<Button size="icon" variant="ghost" className="size-8" onClick={onView} />}
-            >
-              <Eye className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>View</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={<Button size="icon" variant="ghost" className="size-8" onClick={onEdit} />}
-            >
-              <Pencil className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>Edit</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="size-8 text-destructive hover:text-destructive"
-                  onClick={onDelete}
-                />
-              }
-            >
-              <Trash2 className="size-3.5" />
-            </TooltipTrigger>
-            <TooltipContent>Delete</TooltipContent>
-          </Tooltip>
+          <ActionMenu
+            items={[
+              { label: "Configure", onSelect: onEdit },
+              { label: "Initialize", onSelect: onInit },
+              { label: "View Recovery Points", onSelect: onView },
+              { label: "Delete", onSelect: onDelete, destructive: true },
+            ]}
+          />
         </TooltipProvider>
       </div>
     </div>
@@ -938,17 +928,19 @@ export default function RepositoriesPage() {
     }
     setIsLoading(true);
     try {
-      const [repoRes, workerRes] = await Promise.all([
-        fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`, {
-          credentials: "include",
-        }),
-        fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/workers`, {
-          credentials: "include",
+      const [repoData, workerData] = await Promise.all([
+        apiFetchJson<{ repositories?: RepositoryRecord[] }>(
+          `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+          {
+            method: "GET",
+            retries: 1,
+          },
+        ),
+        apiFetchJson<{ workers?: WorkerRecord[] }>(`${env.NEXT_PUBLIC_SERVER_URL}/api/workers`, {
+          method: "GET",
+          retries: 1,
         }),
       ]);
-      if (!repoRes.ok || !workerRes.ok) throw new Error("Failed loading");
-      const repoData = (await repoRes.json()) as { repositories?: RepositoryRecord[] };
-      const workerData = (await workerRes.json()) as { workers?: WorkerRecord[] };
       setRepositories(repoData.repositories ?? []);
       setWorkers(workerData.workers ?? []);
     } catch {
@@ -971,14 +963,14 @@ export default function RepositoriesPage() {
     }
     setIsSaving(true);
     try {
-      const res = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`, {
+      const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
+        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+        {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildRequestBody(createForm)),
-      });
-      if (!res.ok) throw new Error();
-      const data = (await res.json()) as { repository?: RepositoryRecord };
+        retries: 1,
+      },
+      );
       if (data.repository) {
         setRepositories((prev) => [data.repository!, ...prev]);
       }
@@ -1008,12 +1000,10 @@ export default function RepositoriesPage() {
     try {
       const body = buildRequestBody(editForm);
       // For edit, send workerId as null to unlink, and skip password if empty
-      const res = await fetch(
+      const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${editingId}`,
         {
           method: "PATCH",
-          credentials: "include",
-          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             ...body,
             primaryWorkerId: editForm.primaryWorkerId || null,
@@ -1021,10 +1011,9 @@ export default function RepositoriesPage() {
             workerId: editForm.primaryWorkerId || null,
             password: editForm.password.trim() || undefined,
           }),
+          retries: 1,
         },
       );
-      if (!res.ok) throw new Error();
-      const data = (await res.json()) as { repository?: RepositoryRecord };
       if (data.repository) {
         setRepositories((prev) =>
           prev.map((r) => (r.id === data.repository!.id ? data.repository! : r)),
@@ -1043,11 +1032,10 @@ export default function RepositoriesPage() {
     if (!deletingId) return;
     setIsSaving(true);
     try {
-      const res = await fetch(
+      await apiFetchJson(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${deletingId}`,
-        { method: "DELETE", credentials: "include" },
+        { method: "DELETE", retries: 1 },
       );
-      if (!res.ok) throw new Error();
       setRepositories((prev) => prev.filter((r) => r.id !== deletingId));
       setDeletingId("");
       toast.success("Repository deleted.");
@@ -1070,18 +1058,13 @@ export default function RepositoriesPage() {
 
     setInitializingId(repo.id);
     try {
-      const res = await fetch(
+      await apiFetchJson(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repo.id}/init`,
         {
           method: "POST",
-          credentials: "include",
+          retries: 1,
         },
       );
-
-      if (!res.ok) {
-        const data = (await res.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error || "Failed to initialize repository");
-      }
 
       setRepositories((prev) =>
         prev.map((current) =>
@@ -1104,71 +1087,59 @@ export default function RepositoriesPage() {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Repositories</h1>
-          <p className="text-sm text-muted-foreground">
-            Configure backup repositories and attach them to workers.
-          </p>
-        </div>
-        <Dialog
-          open={isCreateOpen}
-          onOpenChange={(open) => {
-            setIsCreateOpen(open);
-            if (!open) setCreateForm(createDefaultFormData());
-          }}
-        >
-          <DialogTrigger render={<Button size="sm" className="gap-2" />}>
-            <Plus className="size-4" />
-            New Repository
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-lg">
-            <DialogHeader>
-              <DialogTitle>Create Repository</DialogTitle>
-              <DialogDescription>
-                Define a backup repository and optionally attach it to a worker.
-              </DialogDescription>
-            </DialogHeader>
-            <RepositoryForm
-              form={createForm}
-              onChange={setCreateForm}
-              workers={workers}
-              disabled={isSaving}
-            />
-            <DialogFooter>
-              <DialogClose render={<Button variant="outline" disabled={isSaving} />}>
-                Cancel
-              </DialogClose>
-              <Button onClick={() => void handleCreate()} disabled={isSaving}>
-                {isSaving ? "Creating..." : "Create"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+      <SectionHeader
+        title="Repositories"
+        subtitle="Repository inventory, initialization state, and worker assignment."
+        actions={
+          <Dialog
+            open={isCreateOpen}
+            onOpenChange={(open) => {
+              setIsCreateOpen(open);
+              if (!open) setCreateForm(createDefaultFormData());
+            }}
+          >
+            <DialogTrigger render={<Button size="sm" className="gap-2" />}>
+              <RiAddLine className="size-4" />
+              New Repository
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-lg">
+              <DialogHeader>
+                <DialogTitle>Create Repository</DialogTitle>
+                <DialogDescription>
+                  Define backend, credentials, and worker linkage.
+                </DialogDescription>
+              </DialogHeader>
+              <RepositoryForm
+                form={createForm}
+                onChange={setCreateForm}
+                workers={workers}
+                disabled={isSaving}
+              />
+              <DialogFooter>
+                <DialogClose render={<Button variant="outline" disabled={isSaving} />}>
+                  Cancel
+                </DialogClose>
+                <Button onClick={() => void handleCreate()} disabled={isSaving}>
+                  {isSaving ? "Creating..." : "Create"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        }
+      />
 
       {/* Summary */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {[
-          { label: "Total", value: summary.total },
-          { label: "Primary linked", value: summary.linkedPrimary },
-          { label: "Backup-linked", value: summary.linkedBackup },
-          { label: "S3 backends", value: summary.byBackend.s3 ?? 0 },
-        ].map((stat) => (
-          <Card key={stat.label}>
-            <CardContent className="flex items-center justify-between p-4">
-              <span className="text-sm text-muted-foreground">{stat.label}</span>
-              <span className="text-2xl font-semibold tabular-nums">{stat.value}</span>
-            </CardContent>
-          </Card>
-        ))}
+        <KpiStat label="Total" value={summary.total} />
+        <KpiStat label="Initialized" value={repositories.filter((repo) => repo.isInitialized).length} />
+        <KpiStat label="Uninitialized" value={repositories.filter((repo) => !repo.isInitialized).length} />
+        <KpiStat label="Backends" value={Object.keys(summary.byBackend).length} />
       </div>
 
       {/* Repository list */}
       <Card>
         <CardHeader>
-          <CardTitle>Repository Directory</CardTitle>
+          <CardTitle>Repository Inventory</CardTitle>
           <CardDescription>{session?.user.email ?? "No active user"}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -1178,12 +1149,11 @@ export default function RepositoriesPage() {
             </p>
           )}
           {!isLoading && repositories.length === 0 && (
-            <div className="flex flex-col items-center gap-2 py-12 text-center">
-              <Database className="size-8 text-muted-foreground/40" />
-              <p className="text-sm text-muted-foreground">
-                No repositories yet. Create one to get started.
-              </p>
-            </div>
+            <ControlPlaneEmptyState
+              icon={RiDatabase2Line}
+              title="No repositories configured"
+              description="Create a repository to start collecting recovery points."
+            />
           )}
           {!isLoading &&
             repositories.map((repo) => (
@@ -1206,7 +1176,7 @@ export default function RepositoriesPage() {
           <DialogHeader>
             <DialogTitle>Edit Repository</DialogTitle>
             <DialogDescription>
-              Update configuration, worker linkage, and credentials.
+              Update general settings, backend, credentials, and worker linkage.
             </DialogDescription>
           </DialogHeader>
           <RepositoryForm

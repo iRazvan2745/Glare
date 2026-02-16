@@ -81,4 +81,70 @@ export const statsRoutes = new Elysia()
     );
 
     return { buckets: result.rows };
+  })
+
+  /**
+   * GET /api/stats/snapshot-activity?hours=24&buckets=24
+   *
+   * Returns time-bucketed backup plan run counts (success / failed)
+   * plus individual runs for event markers on the chart.
+   */
+  .get("/api/stats/snapshot-activity", async ({ request, query, status }) => {
+    const user = await getAuthenticatedUser(request);
+    if (!user) {
+      return status(401, { error: "Unauthorized" });
+    }
+
+    const hoursParam = Number(query?.hours) || 24;
+    const hours = Math.max(1, Math.min(168, hoursParam));
+
+    const bucketsParam = Number(query?.buckets) || 24;
+    const buckets = Math.max(4, Math.min(96, bucketsParam));
+
+    const totalMinutes = hours * 60;
+    const bucketMinutes = Math.max(1, Math.floor(totalMinutes / buckets));
+
+    const bucketsResult = await db.$client.query(
+      `
+      SELECT
+        to_timestamp(
+          floor(extract(epoch FROM "started_at") / ($2 * 60)) * ($2 * 60)
+        ) AS bucket,
+        COUNT(*) FILTER (WHERE "status" = 'success')::int AS success,
+        COUNT(*) FILTER (WHERE "status" = 'failed')::int  AS failed
+      FROM "backup_plan_run"
+      WHERE "user_id" = $1
+        AND "started_at" >= NOW() - INTERVAL '1 hour' * $3
+      GROUP BY bucket
+      ORDER BY bucket ASC
+      `,
+      [user.id, bucketMinutes, hours],
+    );
+
+    const runsResult = await db.$client.query(
+      `
+      SELECT
+        r."id",
+        r."plan_id"      AS "planId",
+        r."status",
+        r."snapshot_id"  AS "snapshotId",
+        r."started_at"   AS "startedAt",
+        r."finished_at"  AS "finishedAt",
+        r."duration_ms"  AS "durationMs",
+        r."error",
+        p."cron"         AS "planCron"
+      FROM "backup_plan_run" r
+      LEFT JOIN "backup_plan" p ON p."id" = r."plan_id"
+      WHERE r."user_id" = $1
+        AND r."started_at" >= NOW() - INTERVAL '1 hour' * $2
+      ORDER BY r."started_at" DESC
+      LIMIT 200
+      `,
+      [user.id, hours],
+    );
+
+    return {
+      buckets: bucketsResult.rows,
+      runs: runsResult.rows,
+    };
   });

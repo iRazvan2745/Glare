@@ -11,6 +11,7 @@ import { type } from "arktype";
 import { Elysia, t } from "elysia";
 import { getAuthenticatedUser } from "../../shared/auth/session";
 import { logError, logInfo, logWarn } from "../../shared/logger";
+import { sendDiscordNotification } from "../../shared/notifications";
 
 const WORKER_ONLINE_THRESHOLD_MS = 45_000;
 const BACKEND_VALUES = ["local", "s3", "b2", "rest", "webdav", "sftp", "rclone", "other"] as const;
@@ -368,6 +369,7 @@ const snapshotWorkerPreviewSchema = t.Object({
 
 const repositorySnapshotWorkerAttributionSchema = t.Object({
   snapshotId: t.String(),
+  sourceSnapshotIds: t.Array(t.String()),
   snapshotShortId: t.String(),
   snapshotTime: t.Union([t.String({ format: "date-time" }), t.Null()]),
   runGroupIds: t.Array(t.String()),
@@ -918,29 +920,28 @@ function extractSnapshotRefsFromRun(
     }
   }
 
-  if (refs.length === 0 && fallbackSnapshotId) {
-    refs.push({
-      snapshotId: fallbackSnapshotId,
-      snapshotTime: fallbackSnapshotTime,
-    });
+  if (refs.length === 0) {
+    if (!fallbackSnapshotId) {
+      return [];
+    }
+    return [
+      {
+        snapshotId: fallbackSnapshotId,
+        snapshotTime: fallbackSnapshotTime,
+      },
+    ];
   }
 
-  const deduped = new Map<string, { snapshotId: string; snapshotTime: Date | null }>();
-  for (const ref of refs) {
-    const key = normalizeSnapshotId(ref.snapshotId);
-    const existing = deduped.get(key);
-    if (!existing) {
-      deduped.set(key, ref);
-      continue;
-    }
-    const existingTimeMs = existing.snapshotTime?.getTime() ?? -1;
-    const nextTimeMs = ref.snapshotTime?.getTime() ?? -1;
-    if (nextTimeMs > existingTimeMs) {
-      deduped.set(key, ref);
-    }
-  }
+  refs.sort((a, b) => {
+    const aMs = a.snapshotTime?.getTime() ?? -1;
+    const bMs = b.snapshotTime?.getTime() ?? -1;
+    return bMs - aMs;
+  });
 
-  return Array.from(deduped.values());
+  // A single run should attribute to one primary snapshot; returning all
+  // discovered refs can inflate historical counts when worker output includes
+  // snapshot listings.
+  return [refs[0]!];
 }
 
 function extractPrimarySnapshotRefFromProxyData(proxyData: unknown) {
@@ -1594,7 +1595,11 @@ async function getBackupEventsForUser(
 async function getRepositorySnapshotWorkerAttributionsForUser(userId: string, repositoryId: string) {
   const runs = await db.query.backupPlanRun.findMany({
     where: (table, { and: dbAnd, eq: dbEq }) =>
-      dbAnd(dbEq(table.userId, userId), dbEq(table.repositoryId, repositoryId)),
+      dbAnd(
+        dbEq(table.userId, userId),
+        dbEq(table.repositoryId, repositoryId),
+        dbEq(table.type, "backup"),
+      ),
     orderBy: (table, { desc }) => [desc(table.startedAt)],
     limit: 1000,
     columns: {
@@ -1691,57 +1696,117 @@ async function getRepositorySnapshotWorkerAttributionsForUser(userId: string, re
 
     const key = normalizeSnapshotId(ref.snapshotId);
     const existing = bySnapshot.get(key);
+    if (existing) {
+      // Snapshot already tracked from runs – skip to avoid inflating counts/workers
+      continue;
+    }
+
+    // Snapshot not seen in any run – create entry from event only
     const isSuccess = event.type === "manual_backup_completed" || event.status === "resolved";
+    bySnapshot.set(key, {
+      snapshotId: ref.snapshotId,
+      snapshotTime: ref.snapshotTime,
+      runGroupIds: new Set<string>(),
+      workerIds: new Set([event.workerId]),
+      runCount: 1,
+      successCount: isSuccess ? 1 : 0,
+      failureCount: isSuccess ? 0 : 1,
+      lastRunAt: event.createdAt,
+    });
+  }
+
+  const groupedByExecution = new Map<
+    string,
+    {
+      snapshotId: string;
+      sourceSnapshotIds: Set<string>;
+      snapshotTime: Date | null;
+      runGroupIds: Set<string>;
+      workerIds: Set<string>;
+      runCount: number;
+      successCount: number;
+      failureCount: number;
+      lastRunAt: Date | null;
+    }
+  >();
+
+  for (const entry of bySnapshot.values()) {
+    const runGroupKey =
+      entry.runGroupIds.size > 0
+        ? `rungroups:${Array.from(entry.runGroupIds).sort().join(",")}`
+        : `snapshot:${normalizeSnapshotId(entry.snapshotId)}`;
+    const existing = groupedByExecution.get(runGroupKey);
     if (!existing) {
-      bySnapshot.set(key, {
-        snapshotId: ref.snapshotId,
-        snapshotTime: ref.snapshotTime,
-        runGroupIds: new Set<string>(),
-        workerIds: new Set([event.workerId]),
-        runCount: 1,
-        successCount: isSuccess ? 1 : 0,
-        failureCount: isSuccess ? 0 : 1,
-        lastRunAt: event.createdAt,
+      groupedByExecution.set(runGroupKey, {
+        snapshotId: entry.snapshotId,
+        sourceSnapshotIds: new Set([entry.snapshotId]),
+        snapshotTime: entry.snapshotTime,
+        runGroupIds: new Set(entry.runGroupIds),
+        workerIds: new Set(entry.workerIds),
+        runCount: entry.runCount,
+        successCount: entry.successCount,
+        failureCount: entry.failureCount,
+        lastRunAt: entry.lastRunAt,
       });
       continue;
     }
 
-    existing.workerIds.add(event.workerId);
-    existing.runCount += 1;
-    if (isSuccess) {
-      existing.successCount += 1;
-    } else {
-      existing.failureCount += 1;
+    for (const runGroupId of entry.runGroupIds) {
+      existing.runGroupIds.add(runGroupId);
     }
-    const existingTimeMs = existing.snapshotTime?.getTime() ?? -1;
-    const nextTimeMs = ref.snapshotTime?.getTime() ?? -1;
-    if (nextTimeMs > existingTimeMs) {
-      existing.snapshotTime = ref.snapshotTime;
+    existing.sourceSnapshotIds.add(entry.snapshotId);
+    for (const workerId of entry.workerIds) {
+      existing.workerIds.add(workerId);
     }
+    existing.runCount += entry.runCount;
+    existing.successCount += entry.successCount;
+    existing.failureCount += entry.failureCount;
+
+    const existingSnapshotMs = existing.snapshotTime?.getTime() ?? -1;
+    const nextSnapshotMs = entry.snapshotTime?.getTime() ?? -1;
+    if (
+      nextSnapshotMs > existingSnapshotMs ||
+      (nextSnapshotMs === existingSnapshotMs &&
+        normalizeSnapshotId(entry.snapshotId) > normalizeSnapshotId(existing.snapshotId))
+    ) {
+      existing.snapshotId = entry.snapshotId;
+      existing.snapshotTime = entry.snapshotTime;
+    }
+
     const existingLastRunMs = existing.lastRunAt?.getTime() ?? -1;
-    const nextLastRunMs = event.createdAt.getTime();
+    const nextLastRunMs = entry.lastRunAt?.getTime() ?? -1;
     if (nextLastRunMs > existingLastRunMs) {
-      existing.lastRunAt = event.createdAt;
+      existing.lastRunAt = entry.lastRunAt;
     }
   }
 
-  const snapshots = Array.from(bySnapshot.values())
+  const snapshots = Array.from(groupedByExecution.values())
     .map((entry) => {
       const workerIdsForSnapshot = Array.from(entry.workerIds);
       const workers = workerIdsForSnapshot
         .map((workerId) => workerById.get(workerId))
         .filter((worker): worker is WorkerPreviewRecord => Boolean(worker))
         .map(mapWorkerPreview);
+      const mergedRunCount = entry.runGroupIds.size > 0 ? entry.runGroupIds.size : entry.runCount;
+      const mergedSuccessCount =
+        entry.runGroupIds.size > 0
+          ? Math.min(mergedRunCount, entry.successCount)
+          : entry.successCount;
+      const mergedFailureCount =
+        entry.runGroupIds.size > 0
+          ? Math.min(mergedRunCount, entry.failureCount)
+          : entry.failureCount;
       return {
         snapshotId: entry.snapshotId,
+        sourceSnapshotIds: Array.from(entry.sourceSnapshotIds),
         snapshotShortId: snapshotShortId(entry.snapshotId),
         snapshotTime: entry.snapshotTime ? entry.snapshotTime.toISOString() : null,
         runGroupIds: Array.from(entry.runGroupIds),
         workerIds: workerIdsForSnapshot,
         workers,
-        runCount: entry.runCount,
-        successCount: entry.successCount,
-        failureCount: entry.failureCount,
+        runCount: mergedRunCount,
+        successCount: mergedSuccessCount,
+        failureCount: mergedFailureCount,
         lastRunAt: entry.lastRunAt ? entry.lastRunAt.toISOString() : null,
       };
     })
@@ -1757,12 +1822,12 @@ async function getRepositorySnapshotWorkerAttributionsForUser(userId: string, re
 async function getRepositorySnapshotActivityForUser(userId: string, repositoryId: string) {
   const now = Date.now();
 
-  const runningRuns = await db.query.backupPlanRun.findMany({
-    where: (table, { and: dbAnd, eq: dbEq }) =>
+  const activeRuns = await db.query.backupPlanRun.findMany({
+    where: (table, { and: dbAnd, eq: dbEq, inArray: dbInArray }) =>
       dbAnd(
         dbEq(table.userId, userId),
         dbEq(table.repositoryId, repositoryId),
-        dbEq(table.status, "running"),
+        dbInArray(table.status, ["running", "pending"]),
       ),
     orderBy: (table, { desc: dbDesc }) => [dbDesc(table.startedAt)],
     limit: 100,
@@ -1770,17 +1835,21 @@ async function getRepositorySnapshotActivityForUser(userId: string, repositoryId
       id: true,
       planId: true,
       workerId: true,
+      status: true,
       startedAt: true,
     },
   });
 
-  const runningPlanIds = Array.from(new Set(runningRuns.map((run) => run.planId)));
-  const runningWorkerIds = Array.from(
-    new Set(runningRuns.map((run) => run.workerId).filter((workerId): workerId is string => Boolean(workerId))),
+  const runningRuns = activeRuns.filter((run) => run.status === "running");
+  const queuedRuns = activeRuns.filter((run) => run.status === "pending");
+
+  const activePlanIds = Array.from(new Set(activeRuns.map((run) => run.planId)));
+  const activeWorkerIds = Array.from(
+    new Set(activeRuns.map((run) => run.workerId).filter((workerId): workerId is string => Boolean(workerId))),
   );
 
-  const [runningPlans, workerById] = await Promise.all([
-    runningPlanIds.length > 0
+  const [activePlans, workerById] = await Promise.all([
+    activePlanIds.length > 0
       ? db
           .select({
             id: backupPlan.id,
@@ -1789,24 +1858,24 @@ async function getRepositorySnapshotActivityForUser(userId: string, repositoryId
             nextRunAt: backupPlan.nextRunAt,
           })
           .from(backupPlan)
-          .where(and(eq(backupPlan.userId, userId), inArray(backupPlan.id, runningPlanIds)))
+          .where(and(eq(backupPlan.userId, userId), inArray(backupPlan.id, activePlanIds)))
       : Promise.resolve([]),
-    getWorkerPreviewByIdsForUser(userId, runningWorkerIds),
+    getWorkerPreviewByIdsForUser(userId, activeWorkerIds),
   ]);
-  const runningPlanById = new Map(runningPlans.map((plan) => [plan.id, plan] as const));
+  const activePlanById = new Map(activePlans.map((plan) => [plan.id, plan] as const));
 
-  const runningRunIds = runningRuns.map((run) => run.id);
+  const activeRunIds = activeRuns.map((run) => run.id);
   const latestEventByRunId = new Map<
     string,
     { message: string; createdAt: Date; details: Record<string, unknown> | null }
   >();
-  if (runningRunIds.length > 0) {
+  if (activeRunIds.length > 0) {
     const runningEvents = await db.query.backupEvent.findMany({
       where: (table, { and: dbAnd, eq: dbEq, inArray: dbInArray }) =>
         dbAnd(
           dbEq(table.userId, userId),
           dbEq(table.repositoryId, repositoryId),
-          dbInArray(table.runId, runningRunIds),
+          dbInArray(table.runId, activeRunIds),
         ),
       orderBy: (table, { desc: dbDesc }) => [dbDesc(table.createdAt)],
       limit: 500,
@@ -1849,7 +1918,7 @@ async function getRepositorySnapshotActivityForUser(userId: string, repositoryId
   };
 
   const runningActivities = runningRuns.map((run) => {
-    const plan = runningPlanById.get(run.planId) ?? null;
+    const plan = activePlanById.get(run.planId) ?? null;
     const worker = run.workerId ? (workerById.get(run.workerId) ?? null) : null;
     const latestEvent = latestEventByRunId.get(run.id) ?? null;
     const details = latestEvent?.details ?? null;
@@ -1929,6 +1998,42 @@ async function getRepositorySnapshotActivityForUser(userId: string, repositoryId
     };
   });
 
+  const queuedActivities = queuedRuns.map((run) => {
+    const plan = activePlanById.get(run.planId) ?? null;
+    const worker = run.workerId ? (workerById.get(run.workerId) ?? null) : null;
+    const latestEvent = latestEventByRunId.get(run.id) ?? null;
+    const details = latestEvent?.details ?? null;
+    const elapsedMs = Math.max(0, now - run.startedAt.getTime());
+    const message =
+      typeof details?.message === "string"
+        ? details.message
+        : latestEvent?.message ||
+          `Backup queued${worker?.name ? ` on ${worker.name}` : ""}`;
+
+    return {
+      id: `queued:${run.id}`,
+      kind: "pending" as const,
+      status: "pending" as const,
+      planId: run.planId,
+      planName: plan?.name ?? null,
+      workerId: run.workerId ?? null,
+      workerName: worker?.name ?? null,
+      startedAt: run.startedAt.toISOString(),
+      nextRunAt: null,
+      elapsedMs,
+      estimatedTotalMs: null,
+      progressPercent: 0,
+      phase: typeof details?.phase === "string" ? details.phase : "queued",
+      currentPath: null,
+      filesDone: null,
+      filesTotal: null,
+      bytesDone: null,
+      bytesTotal: null,
+      lastEventAt: latestEvent ? latestEvent.createdAt.toISOString() : null,
+      message,
+    };
+  });
+
   const scheduledPlans = await db.query.backupPlan.findMany({
     where: (table, { and: dbAnd, eq: dbEq }) =>
       dbAnd(
@@ -1947,7 +2052,7 @@ async function getRepositorySnapshotActivityForUser(userId: string, repositoryId
 
   const pendingActivities = scheduledPlans
     .filter((plan) => plan.nextRunAt && plan.nextRunAt.getTime() > now)
-    .filter((plan) => !runningPlanIds.includes(plan.id))
+    .filter((plan) => !activePlanIds.includes(plan.id))
     .slice(0, 20)
     .map((plan) => ({
       id: `pending:${plan.id}:${plan.nextRunAt!.toISOString()}`,
@@ -1972,7 +2077,7 @@ async function getRepositorySnapshotActivityForUser(userId: string, repositoryId
       message: "Scheduled backup pending",
     }));
 
-  return { activities: [...runningActivities, ...pendingActivities] };
+  return { activities: [...runningActivities, ...queuedActivities, ...pendingActivities] };
 }
 
 type ProxyError = { error: string; status: number };
@@ -2134,6 +2239,22 @@ async function createBackupEvent(input: {
     message: input.message,
     detailsJson: input.details ? JSON.stringify(input.details) : null,
   });
+
+  if ((input.severity ?? "error") === "error" || input.type.includes("failed")) {
+    await sendDiscordNotification({
+      userId: input.userId,
+      category: "backup_failures",
+      title: "Backup event reported",
+      message: input.message,
+      severity: "error",
+      fields: [
+        { name: "Type", value: input.type },
+        { name: "Repository ID", value: input.repositoryId },
+        ...(input.planId ? [{ name: "Plan ID", value: input.planId }] : []),
+        ...(input.workerId ? [{ name: "Worker ID", value: input.workerId }] : []),
+      ],
+    });
+  }
 }
 
 async function getBackupWorkerIdsForRepository(repositoryId: string) {
@@ -2154,6 +2275,221 @@ function planHasRetentionPolicy(plan: BackupPlanRecord) {
       plan.keepYearly != null ||
       (plan.keepWithin != null && plan.keepWithin.trim().length > 0))
   );
+}
+
+async function enqueueBackupPlanRuns(plan: BackupPlanRecord) {
+  const startedAtMs = Date.now();
+  const startedAtDate = new Date();
+  const runGroupId = crypto.randomUUID();
+  const planPathsConfig = parsePlanPathsConfig(plan.pathsJson);
+  const tags = parseStringArrayJson(plan.tagsJson);
+  const nextRunAt = plan.enabled ? computeNextRun(plan.cron, startedAtDate) : null;
+
+  if (!hasAnyPlanPaths(planPathsConfig)) {
+    const durationMs = Date.now() - startedAtMs;
+    await db
+      .update(backupPlan)
+      .set({
+        lastRunAt: startedAtDate,
+        nextRunAt,
+        lastStatus: "failed",
+        lastError: "No backup paths configured",
+        lastDurationMs: durationMs,
+      })
+      .where(eq(backupPlan.id, plan.id));
+    await createBackupEvent({
+      userId: plan.userId,
+      repositoryId: plan.repositoryId,
+      planId: plan.id,
+      runId: null,
+      workerId: null,
+      type: "backup_failed",
+      message: "No backup paths configured",
+      details: { reason: "empty_paths" },
+    });
+    return;
+  }
+
+  const repository = await db.query.rusticRepository.findFirst({
+    where: (table, { and: dbAnd, eq: dbEq }) =>
+      dbAnd(dbEq(table.id, plan.repositoryId), dbEq(table.userId, plan.userId)),
+    columns: {
+      id: true,
+      name: true,
+      backend: true,
+      repository: true,
+      password: true,
+      optionsJson: true,
+    },
+  });
+
+  if (!repository) {
+    const durationMs = Date.now() - startedAtMs;
+    await db
+      .update(backupPlan)
+      .set({
+        lastRunAt: startedAtDate,
+        nextRunAt,
+        lastStatus: "failed",
+        lastError: "Repository not found",
+        lastDurationMs: durationMs,
+      })
+      .where(eq(backupPlan.id, plan.id));
+    await createBackupEvent({
+      userId: plan.userId,
+      repositoryId: plan.repositoryId,
+      planId: plan.id,
+      runId: null,
+      workerId: null,
+      type: "backup_failed",
+      message: "Repository not found",
+      details: { reason: "repository_not_found" },
+    });
+    return;
+  }
+
+  const planWorkerRows = await db
+    .select({ workerId: backupPlanWorker.workerId })
+    .from(backupPlanWorker)
+    .where(eq(backupPlanWorker.planId, plan.id));
+  const planWorkerIds =
+    planWorkerRows.length > 0
+      ? Array.from(new Set(planWorkerRows.map((row) => row.workerId)))
+      : [plan.workerId];
+
+  const backupWorkerIds = await getBackupWorkerIdsForRepository(repository.id);
+  const validWorkerIds = planWorkerIds.filter((workerId) => backupWorkerIds.includes(workerId));
+  const invalidWorkerIds = planWorkerIds.filter((workerId) => !backupWorkerIds.includes(workerId));
+
+  for (const invalidWorkerId of invalidWorkerIds) {
+    await createBackupEvent({
+      userId: plan.userId,
+      repositoryId: repository.id,
+      planId: plan.id,
+      runId: null,
+      workerId: invalidWorkerId,
+      type: "backup_failed",
+      message: "Plan worker is not attached to repository backup workers",
+      details: { reason: "worker_not_attached_to_repository", workerId: invalidWorkerId },
+    });
+  }
+
+  if (validWorkerIds.length === 0) {
+    const durationMs = Date.now() - startedAtMs;
+    await db
+      .update(backupPlan)
+      .set({
+        lastRunAt: startedAtDate,
+        nextRunAt,
+        lastStatus: "failed",
+        lastError: "No plan workers are attached to repository backup workers",
+        lastDurationMs: durationMs,
+      })
+      .where(eq(backupPlan.id, plan.id));
+    return;
+  }
+
+  const rawOptions = parseOptionsJson(repository.optionsJson);
+  const backupOptions = hasRcloneOptions(rawOptions)
+    ? rawOptions
+    : repository.backend === "s3" && hasLegacyS3Options(rawOptions)
+      ? enrichRcloneOptionsFromS3(rawOptions)
+      : rawOptions;
+  const shouldForceRcloneBackup =
+    repository.backend === "rclone" ||
+    (repository.backend === "s3" &&
+      (hasRcloneOptions(backupOptions) || hasLegacyS3Options(backupOptions)));
+  const backupBackend = shouldForceRcloneBackup ? "rclone" : repository.backend;
+  const backupRepository = shouldForceRcloneBackup
+    ? deriveRcloneRepositoryForInit(repository.repository, repository.id, backupOptions)
+    : repository.repository;
+
+  let enqueuedCount = 0;
+  let firstQueueError: string | null = null;
+
+  for (const workerId of validWorkerIds) {
+    const workerPaths = resolvePathsForWorker(planPathsConfig, workerId);
+    const runId = crypto.randomUUID();
+
+    if (workerPaths.length === 0) {
+      const errorMessage = "No backup paths configured for worker";
+      if (!firstQueueError) firstQueueError = errorMessage;
+      await db.insert(backupPlanRun).values({
+        id: runId,
+        planId: plan.id,
+        userId: plan.userId,
+        repositoryId: plan.repositoryId,
+        workerId,
+        runGroupId,
+        status: "failed",
+        error: errorMessage,
+        startedAt: new Date(),
+        finishedAt: new Date(),
+      });
+      await createBackupEvent({
+        userId: plan.userId,
+        repositoryId: repository.id,
+        planId: plan.id,
+        runId,
+        workerId,
+        type: "backup_failed",
+        message: errorMessage,
+        details: { workerId, reason: "worker_paths_missing" },
+      });
+      continue;
+    }
+
+    const requestPayload = {
+      backend: backupBackend,
+      options: backupOptions,
+      repository: backupRepository,
+      password: repository.password ?? undefined,
+      paths: workerPaths,
+      tags: tags.length > 0 ? tags : undefined,
+      dryRun: plan.dryRun,
+    };
+
+    await db.insert(backupPlanRun).values({
+      id: runId,
+      planId: plan.id,
+      userId: plan.userId,
+      repositoryId: plan.repositoryId,
+      workerId,
+      runGroupId,
+      status: "pending",
+      startedAt: new Date(),
+      outputJson: JSON.stringify({ request: requestPayload }),
+    });
+    await createBackupEvent({
+      userId: plan.userId,
+      repositoryId: repository.id,
+      planId: plan.id,
+      runId,
+      workerId,
+      type: "backup_pending",
+      status: "open",
+      severity: "info",
+      message: "Backup queued on worker",
+      details: {
+        phase: "queued",
+        progressPercent: 0,
+        workerId,
+      },
+    });
+    enqueuedCount += 1;
+  }
+
+  const durationMs = Date.now() - startedAtMs;
+  await db
+    .update(backupPlan)
+    .set({
+      lastRunAt: startedAtDate,
+      nextRunAt,
+      lastStatus: enqueuedCount > 0 ? "running" : "failed",
+      lastError: enqueuedCount > 0 ? null : firstQueueError || "Failed to enqueue worker runs",
+      lastDurationMs: enqueuedCount > 0 ? null : durationMs,
+    })
+    .where(eq(backupPlan.id, plan.id));
 }
 
 async function executePruneForPlan(
@@ -2685,6 +3021,7 @@ async function executeBackupPlan(plan: BackupPlanRecord) {
     }
   }
 }
+void executeBackupPlan;
 
 async function runDueBackupPlans() {
   if (backupPlanSchedulerRunning) return;
@@ -2739,7 +3076,7 @@ async function runDueBackupPlans() {
         repositoryId: plan.repositoryId,
       });
       try {
-        await executeBackupPlan(plan);
+        await enqueueBackupPlanRuns(plan);
       } finally {
         await releaseBackupPlanLease(plan.id);
       }
@@ -2751,6 +3088,11 @@ async function runDueBackupPlans() {
 
 function startBackupPlanScheduler() {
   if (backupPlanSchedulerStarted) return;
+  const schedulerEnabled = process.env.GLARE_ENABLE_SERVER_PLAN_SCHEDULER === "true";
+  if (!schedulerEnabled) {
+    logInfo("backup plan scheduler disabled (worker-owned scheduling enabled)");
+    return;
+  }
   backupPlanSchedulerStarted = true;
 
   setInterval(() => {
@@ -3484,6 +3826,8 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
           {
             repository: snapshotsRepository,
             password: repositoryRecord.password ?? undefined,
+            backend: shouldForceRcloneSnapshots ? "rclone" : repositoryRecord.backend,
+            options: shouldForceRcloneSnapshots ? snapshotOptions : undefined,
           },
         );
         return status(proxy.status as 200, proxy.data);
@@ -3790,6 +4134,8 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
             password: repositoryRecord.password ?? undefined,
             snapshot: body.snapshot,
             path: body.path,
+            backend: shouldForceRcloneSnapshots ? "rclone" : repositoryRecord.backend,
+            options: shouldForceRcloneSnapshots ? snapshotOptions : undefined,
           },
         );
         return status(proxy.status as 200, proxy.data);
@@ -3885,6 +4231,8 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
           {
             repository: maintenanceRepository,
             password: repositoryRecord.password ?? undefined,
+            backend: shouldForceRcloneMaintenance ? "rclone" : repositoryRecord.backend,
+            options: shouldForceRcloneMaintenance ? maintenanceOptions : undefined,
           },
         );
         return status(proxy.status as 200, proxy.data);
@@ -3987,6 +4335,8 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
           {
             repository: maintenanceRepository,
             password: repositoryRecord.password ?? undefined,
+            backend: shouldForceRcloneMaintenance ? "rclone" : repositoryRecord.backend,
+            options: shouldForceRcloneMaintenance ? maintenanceOptions : undefined,
           },
         );
         return status(proxy.status as 200, proxy.data);
@@ -4607,7 +4957,7 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
 
       void (async () => {
         try {
-          await executeBackupPlan(existing);
+          await enqueueBackupPlanRuns(existing);
         } finally {
           await releaseBackupPlanLease(existing.id);
         }

@@ -1,12 +1,22 @@
 "use client";
 
-import { Copy, Link2, Pencil, Plus, Search, Terminal, Trash2, UserRoundPlus } from "lucide-react";
+import {
+  RiAddLine,
+  RiFileCopyLine,
+  RiLinkM,
+  RiPulseLine,
+  RiServerLine,
+  RiTerminalBoxLine,
+  RiUserAddLine,
+} from "@remixicon/react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { parseAsBoolean, parseAsString, useQueryState } from "nuqs";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
+import { ActionMenu, ControlPlaneEmptyState, SectionHeader, StatusBadge } from "@/components/control-plane";
+import { DataTableFilter, useDataTableFilters } from "@/components/data-table-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -19,14 +29,20 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { deriveHealthStatus } from "@/lib/control-plane/health";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
 import { env } from "@glare/env/web";
+import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "@/components/ui/select";
 
 type WorkerRecord = {
   id: string;
   name: string;
+  region: string | null;
   status: "online" | "degraded" | "offline" | string;
   lastSeenAt: string | null;
   uptimeMs: number;
@@ -237,18 +253,7 @@ function WorkersPageContent() {
     "workerName",
     parseAsString.withDefault("").withOptions({ history: "replace" }),
   );
-  const [searchQuery, setSearchQuery] = useQueryState(
-    "q",
-    parseAsString.withDefault("").withOptions({ history: "replace" }),
-  );
-  const [statusFilter, setStatusFilter] = useQueryState(
-    "status",
-    parseAsString.withDefault("all").withOptions({ history: "replace" }),
-  );
-  const [sortBy, setSortBy] = useQueryState(
-    "sort",
-    parseAsString.withDefault("name-asc").withOptions({ history: "replace" }),
-  );
+  const [sortBy, setSortBy] = useState("name-asc");
   const [editingWorkerId, setEditingWorkerId] = useQueryState(
     "edit",
     parseAsString.withDefault("").withOptions({ history: "replace" }),
@@ -276,7 +281,7 @@ function WorkersPageContent() {
 
       try {
         const data = await apiFetchJson<{ workers?: WorkerRecord[] }>(
-          `${env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
+          `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
           {
             method: "GET",
             retries: 1,
@@ -292,7 +297,7 @@ function WorkersPageContent() {
             nextWorkers.map(async (worker) => {
               try {
                 const eventsData = await apiFetchJson<{ events?: SyncEventRecord[] }>(
-                  `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${worker.id}/sync-events?hours=24`,
+                  `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${worker.id}/sync-events?hours=24&limit=24`,
                   {
                     method: "GET",
                     retries: 1,
@@ -335,7 +340,7 @@ function WorkersPageContent() {
 
       try {
         const data = await apiFetchJson<{ repositories?: RepositoryRecord[] }>(
-          `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+          `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
           {
             method: "GET",
             retries: 1,
@@ -365,11 +370,6 @@ function WorkersPageContent() {
       return;
     }
 
-    const intervalId = window.setInterval(() => {
-      void loadWorkers(true);
-      void loadRepositories(true);
-    }, 5000);
-
     const onVisibilityChange = () => {
       if (document.visibilityState === "visible") {
         void loadWorkers(true);
@@ -380,27 +380,51 @@ function WorkersPageContent() {
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      window.clearInterval(intervalId);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [loadRepositories, loadWorkers, session?.user]);
 
+  const workerFilterColumnsConfig = useMemo(
+    () => [
+      {
+        id: "status",
+        accessor: (worker: WorkerRecord) =>
+          worker.isOnline ? "online" : worker.status === "degraded" ? "degraded" : "offline",
+        displayName: "Status",
+        icon: RiPulseLine,
+        type: "option" as const,
+        options: [
+          { label: "Online", value: "online" },
+          { label: "Offline", value: "offline" },
+          { label: "Degraded", value: "degraded" },
+        ],
+      },
+    ],
+    [],
+  );
+
+  const { actions: workerFilterActions, columns: workerFilterColumns, filters: workerFilters, strategy: workerFilterStrategy } = useDataTableFilters({
+    strategy: "client",
+    data: workers,
+    columnsConfig: workerFilterColumnsConfig,
+  });
+
+  const statusFilter = useMemo(() => {
+    const filter = workerFilters.find((entry) => entry.columnId === "status");
+    return filter?.values ?? [];
+  }, [workerFilters]);
+
   const filteredWorkers = useMemo(() => {
-    const normalizedQuery = searchQuery.trim().toLowerCase();
-    const statusFiltered = workers.filter((currentWorker) => {
-      if (statusFilter === "all") return true;
-      if (statusFilter === "online") return currentWorker.isOnline;
-      if (statusFilter === "offline") return !currentWorker.isOnline;
-      return currentWorker.status === statusFilter;
-    });
+    let result = workers;
 
-    const searchFiltered = normalizedQuery
-      ? statusFiltered.filter((currentWorker) =>
-          currentWorker.name.toLowerCase().includes(normalizedQuery),
-        )
-      : statusFiltered;
+    if (statusFilter.length > 0) {
+      result = result.filter((w) => {
+        const derivedStatus = w.isOnline ? "online" : w.status === "degraded" ? "degraded" : "offline";
+        return statusFilter.includes(derivedStatus);
+      });
+    }
 
-    return [...searchFiltered].sort((a, b) => {
+    return [...result].sort((a, b) => {
       if (sortBy === "last-seen-desc") {
         return new Date(b.lastSeenAt ?? 0).getTime() - new Date(a.lastSeenAt ?? 0).getTime();
       }
@@ -415,7 +439,7 @@ function WorkersPageContent() {
       }
       return a.name.localeCompare(b.name);
     });
-  }, [searchQuery, sortBy, statusFilter, workers]);
+  }, [sortBy, statusFilter, workers]);
 
   const repositoriesByWorkerId = useMemo(() => {
     const map = new Map<string, RepositoryRecord[]>();
@@ -469,20 +493,14 @@ function WorkersPageContent() {
     setIsCreatingWorker(true);
 
     try {
-      const response = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/workers`, {
+      const data = await apiFetchJson<{ worker?: WorkerRecord; syncToken?: string }>(
+        `${env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
+        {
         method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({ name: normalizedName }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to create worker");
-      }
-
-      const data = (await response.json()) as { worker?: WorkerRecord; syncToken?: string };
+        retries: 1,
+      },
+      );
       if (data.worker) {
         setWorkers((previous) => [data.worker as WorkerRecord, ...previous]);
         setLatestWorkerId(data.worker.id);
@@ -513,20 +531,14 @@ function WorkersPageContent() {
 
     setIsUpdatingWorker(true);
     try {
-      const response = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${editingWorkerId}`, {
+      const data = await apiFetchJson<{ worker?: WorkerRecord }>(
+        `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${editingWorkerId}`,
+        {
         method: "PATCH",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({ name: normalizedName }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to update worker");
-      }
-
-      const data = (await response.json()) as { worker?: WorkerRecord };
+        retries: 1,
+      },
+      );
       if (data.worker) {
         setWorkers((previous) =>
           previous.map((item) => (item.id === data.worker!.id ? data.worker! : item)),
@@ -550,17 +562,13 @@ function WorkersPageContent() {
 
     setIsDeletingWorker(true);
     try {
-      const response = await fetch(
+      await apiFetchJson(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${deletingWorkerId}`,
         {
           method: "DELETE",
-          credentials: "include",
+          retries: 1,
         },
       );
-
-      if (!response.ok) {
-        throw new Error("Failed to delete worker");
-      }
 
       setWorkers((previous) => previous.filter((item) => item.id !== deletingWorkerId));
       setRepositories((previous) =>
@@ -588,23 +596,14 @@ function WorkersPageContent() {
 
     setIsSavingRepoSetup(true);
     try {
-      const response = await fetch(
+      const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${selectedRepositoryIdToAttach}`,
         {
           method: "PATCH",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
           body: JSON.stringify({ workerId: activeWorker.id }),
+          retries: 1,
         },
       );
-
-      if (!response.ok) {
-        throw new Error("Failed to attach repository");
-      }
-
-      const data = (await response.json()) as { repository?: RepositoryRecord };
       if (data.repository) {
         setRepositories((previous) =>
           previous.map((repository) =>
@@ -624,23 +623,14 @@ function WorkersPageContent() {
   async function detachRepository(repositoryId: string) {
     setIsSavingRepoSetup(true);
     try {
-      const response = await fetch(
+      const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repositoryId}`,
         {
           method: "PATCH",
-          credentials: "include",
-          headers: {
-            "Content-Type": "application/json",
-          },
           body: JSON.stringify({ workerId: null }),
+          retries: 1,
         },
       );
-
-      if (!response.ok) {
-        throw new Error("Failed to detach repository");
-      }
-
-      const data = (await response.json()) as { repository?: RepositoryRecord };
       if (data.repository) {
         setRepositories((previous) =>
           previous.map((repository) =>
@@ -682,12 +672,10 @@ function WorkersPageContent() {
 
     setIsSavingRepoSetup(true);
     try {
-      const response = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`, {
+      const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
+        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+        {
         method: "POST",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify({
           name,
           backend: quickRepositoryBackend,
@@ -713,13 +701,9 @@ function WorkersPageContent() {
                 }
               : undefined,
         }),
-      });
-
-      if (!response.ok) {
-        throw new Error("Failed to create repository");
-      }
-
-      const data = (await response.json()) as { repository?: RepositoryRecord };
+        retries: 1,
+      },
+      );
       if (data.repository) {
         setRepositories((previous) => [data.repository!, ...previous]);
       }
@@ -738,22 +722,19 @@ function WorkersPageContent() {
   }
 
   const latestWorkerRunCommand = latestSyncToken
-    ? `cargo run --manifest-path apps/worker/Cargo.toml -- --master-api-endpoint ${env.NEXT_PUBLIC_SERVER_URL} --local-api-endpoint http://127.0.0.1:4001 --api-token '${latestSyncToken}'`
+    ? `cargo run --manifest-path apps/worker/Cargo.toml -- --master-api-endpoint ${process.env.NEXT_PUBLIC_SERVER_URL} --local-api-endpoint http://127.0.0.1:4001 --api-token '${latestSyncToken}'`
     : "";
   const quickS3Preview = useMemo(() => buildS3PathPreview(quickS3), [quickS3]);
+  const onlineCount = workers.filter((worker) => worker.isOnline).length;
+  const offlineCount = workers.length - onlineCount;
 
   return (
     <div className="space-y-4">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Workers</h1>
-          <p className="text-sm text-muted-foreground">
-            Workers are assigned directly to your user. Use Rustic Setup per worker to attach
-            repositories.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
+      <SectionHeader
+        title="Worker Fleet"
+        subtitle={`${onlineCount} online • ${offlineCount} offline`}
+        actions={
+          <div className="flex items-center gap-2">
           <Button variant="outline" size="sm" onClick={() => router.push("/repositories" as never)}>
             Repositories
           </Button>
@@ -762,7 +743,7 @@ function WorkersPageContent() {
             onOpenChange={(nextValue) => void setIsCreateDialogOpen(nextValue)}
           >
             <DialogTrigger render={<Button size="sm" className="gap-2" />}>
-              <UserRoundPlus className="size-4" />
+              <RiUserAddLine className="size-4" />
               Create Worker
             </DialogTrigger>
             <DialogContent>
@@ -798,8 +779,9 @@ function WorkersPageContent() {
               </DialogFooter>
             </DialogContent>
           </Dialog>
-        </div>
-      </div>
+          </div>
+        }
+      />
 
       <div>
         <p className="text-sm text-muted-foreground">
@@ -809,9 +791,9 @@ function WorkersPageContent() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Worker Directory</CardTitle>
+          <CardTitle>Worker Fleet</CardTitle>
           <CardDescription>
-            Create, search, and review workers tied to your account.
+            Operational capacity, health, and execution controls for worker nodes.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
@@ -832,7 +814,7 @@ function WorkersPageContent() {
                     toast.success("Sync token copied.");
                   }}
                 >
-                  <Copy className="size-4" />
+                  <RiFileCopyLine className="size-4" />
                 </Button>
               </div>
               <p className="mt-3 text-xs font-medium text-emerald-700 dark:text-emerald-300">
@@ -850,7 +832,7 @@ function WorkersPageContent() {
                     toast.success("Run command copied.");
                   }}
                 >
-                  <Terminal className="size-4" />
+                  <RiTerminalBoxLine className="size-4" />
                 </Button>
               </div>
               {latestWorkerId ? (
@@ -861,37 +843,25 @@ function WorkersPageContent() {
             </div>
           ) : null}
 
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
-            <Input
-              value={searchQuery}
-              onChange={(event) => void setSearchQuery(event.target.value)}
-              placeholder="Search workers"
-              className="pl-8"
-            />
-          </div>
           <div className="flex flex-wrap items-center gap-2">
-            <select
-              className="h-8 rounded border bg-background px-2 text-xs"
-              value={statusFilter}
-              onChange={(event) => void setStatusFilter(event.target.value)}
-            >
-              <option value="all">All statuses</option>
-              <option value="online">Online</option>
-              <option value="offline">Offline</option>
-              <option value="degraded">Degraded</option>
-            </select>
-            <select
-              className="h-8 rounded border bg-background px-2 text-xs"
-              value={sortBy}
-              onChange={(event) => void setSortBy(event.target.value)}
-            >
-              <option value="name-asc">Name A-Z</option>
-              <option value="name-desc">Name Z-A</option>
-              <option value="last-seen-desc">Last seen newest</option>
-              <option value="last-seen-asc">Last seen oldest</option>
-              <option value="status">Status</option>
-            </select>
+            <DataTableFilter
+              columns={workerFilterColumns}
+              filters={workerFilters}
+              actions={workerFilterActions}
+              strategy={workerFilterStrategy}
+            />
+            <Select value={sortBy} onValueChange={(e) => setSortBy(e!)}>
+              <SelectTrigger size="sm">
+                <SelectValue placeholder="Sort by" />
+              </SelectTrigger>
+              <SelectPopup>
+                <SelectItem value="name-asc">Name A-Z</SelectItem>
+                <SelectItem value="name-desc">Name Z-A</SelectItem>
+                <SelectItem value="last-seen-desc">Last seen newest</SelectItem>
+                <SelectItem value="last-seen-asc">Last seen oldest</SelectItem>
+                <SelectItem value="status">Status</SelectItem>
+              </SelectPopup>
+            </Select>
           </div>
 
           {isLoadingWorkers || isLoadingRepositories ? (
@@ -899,21 +869,26 @@ function WorkersPageContent() {
           ) : null}
 
           {!isLoadingWorkers && filteredWorkers.length === 0 ? (
-            <p className="text-sm text-muted-foreground">
-              No workers found. Create one to get started.
-            </p>
+            <ControlPlaneEmptyState
+              icon={RiServerLine}
+              title="No workers registered"
+              description="Register a worker to start executing snapshot and retention jobs."
+            />
           ) : null}
 
           {!isLoadingWorkers && filteredWorkers.length > 0 ? (
             <div className="overflow-x-auto rounded-md border">
-              <table className="w-full min-w-[760px] text-xs">
+              <table className="w-full min-w-190 text-xs">
                 <thead>
                   <tr className="border-b bg-muted/30 text-left text-muted-foreground">
                     <th className="px-3 py-2 font-medium">Worker</th>
+                    <th className="px-3 py-2 font-medium">Region</th>
                     <th className="px-3 py-2 font-medium">Status</th>
-                    <th className="px-3 py-2 font-medium">Uptime (6)</th>
-                    <th className="px-3 py-2 font-medium">Metrics</th>
-                    <th className="px-3 py-2 font-medium">Repositories</th>
+                    <th className="px-3 py-2 font-medium">Last Seen</th>
+                    <th className="px-3 py-2 font-medium">Uptime</th>
+                    <th className="px-3 py-2 font-medium">Requests (24h)</th>
+                    <th className="px-3 py-2 font-medium">Errors (24h)</th>
+                    <th className="px-3 py-2 font-medium">Repos Attached</th>
                     <th className="px-3 py-2 text-right font-medium">Actions</th>
                   </tr>
                 </thead>
@@ -931,49 +906,41 @@ function WorkersPageContent() {
                             {currentWorker.name}
                           </Link>
                         </td>
-                        <td className="px-3 py-2">
-                          <span
-                            className={`rounded px-2 py-0.5 ${
-                              currentWorker.isOnline
-                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-200"
-                                : "bg-muted text-muted-foreground"
-                            }`}
-                          >
-                            {currentWorker.isOnline ? "Online" : "Offline"}
-                          </span>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {currentWorker.region ?? "—"}
                         </td>
                         <td className="px-3 py-2">
-                          <div className="flex items-center gap-1">
-                            {Array.from({ length: 6 }).map((_, index) => {
-                              const status = workerUptimeById[currentWorker.id]?.[index] ?? "unknown";
-                              const tone =
-                                status === "online"
-                                  ? "bg-emerald-500/80"
-                                  : status === "degraded"
-                                    ? "bg-amber-500/80"
-                                    : status === "offline"
-                                      ? "bg-rose-500/70"
-                                      : "bg-muted";
-
-                              return (
-                                <span
-                                  key={`${currentWorker.id}-uptime-${index}`}
-                                  className={`inline-block h-4 w-2 rounded-sm ${tone}`}
-                                  aria-label={`Uptime slot ${index + 1}: ${status}`}
-                                  title={`Status: ${status}`}
-                                />
-                              );
+                          <StatusBadge
+                            status={deriveHealthStatus({
+                              totalWorkers: 1,
+                              offlineWorkers: currentWorker.isOnline ? 0 : 1,
+                              errorRate24h:
+                                currentWorker.requestsTotal > 0
+                                  ? (currentWorker.errorTotal / currentWorker.requestsTotal) * 100
+                                  : 0,
                             })}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2 text-muted-foreground tabular-nums">
-                          req {formatNumber(currentWorker.requestsTotal)} / err{" "}
-                          {formatNumber(currentWorker.errorTotal)} / up {formatUptime(currentWorker.uptimeMs)}
+                            label={currentWorker.isOnline ? "Online" : "Offline"}
+                          />
                         </td>
                         <td className="px-3 py-2 text-muted-foreground">
-                          {linkedRepositories.length > 0
-                            ? linkedRepositories.map((repository) => repository.name).join(", ")
-                            : "none"}
+                          {currentWorker.lastSeenAt
+                            ? new Intl.DateTimeFormat(undefined, {
+                                dateStyle: "short",
+                                timeStyle: "short",
+                              }).format(new Date(currentWorker.lastSeenAt))
+                            : "—"}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground tabular-nums">
+                          {formatUptime(currentWorker.uptimeMs)}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground tabular-nums">
+                          {formatNumber(currentWorker.requestsTotal)}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground tabular-nums">
+                          {formatNumber(currentWorker.errorTotal)}
+                        </td>
+                        <td className="px-3 py-2 text-muted-foreground">
+                          {linkedRepositories.length}
                         </td>
                         <td className="px-3 py-2">
                           <div className="flex items-center justify-end gap-2">
@@ -983,28 +950,31 @@ function WorkersPageContent() {
                               className="h-7 gap-1 px-2 text-xs"
                               onClick={() => setActiveRepositoryWorkerId(currentWorker.id)}
                             >
-                              <Link2 className="size-3.5" />
-                              Rustic Setup
+                              <RiLinkM className="size-3.5" />
+                              Setup
                             </Button>
-                            <Button
-                              size="icon-xs"
-                              variant="outline"
-                              onClick={() => {
-                                void setEditingWorkerId(currentWorker.id);
-                                void setEditWorkerNameDraft(currentWorker.name);
-                              }}
-                            >
-                              <Pencil className="size-3.5" />
-                            </Button>
-                            <Button
-                              size="icon-xs"
-                              variant="destructive"
-                              onClick={() => {
-                                void setDeletingWorkerId(currentWorker.id);
-                              }}
-                            >
-                              <Trash2 className="size-3.5" />
-                            </Button>
+                            <ActionMenu
+                              items={[
+                                { label: "View", onSelect: () => router.push(`/workers/${currentWorker.id}` as never) },
+                                {
+                                  label: "Edit",
+                                  onSelect: () => {
+                                    void setEditWorkerNameDraft(currentWorker.name);
+                                    void setEditingWorkerId(currentWorker.id);
+                                  },
+                                },
+                                { label: "Logs", onSelect: () => toast.info("Logs view is not available yet.") },
+                                { label: "Restart", onSelect: () => toast.info("Restart action is stubbed.") },
+                                { label: "Drain", onSelect: () => toast.info("Drain action is stubbed.") },
+                                {
+                                  label: "Delete",
+                                  onSelect: () => {
+                                    void setDeletingWorkerId(currentWorker.id);
+                                  },
+                                  destructive: true,
+                                },
+                              ]}
+                            />
                           </div>
                         </td>
                       </tr>
@@ -1089,270 +1059,370 @@ function WorkersPageContent() {
           }
         }}
       >
-        <DialogContent>
+        <DialogContent className="sm:max-w-lg max-h-[85vh] flex flex-col overflow-hidden">
           <DialogHeader>
-            <DialogTitle>Rustic Setup</DialogTitle>
+            <DialogTitle>Repository Setup</DialogTitle>
             <DialogDescription>
               {activeWorker
-                ? `Attach repositories for ${activeWorker.name}.`
-                : "Attach repositories to this worker."}
+                ? `Manage repositories for ${activeWorker.name}.`
+                : "Manage repositories for this worker."}
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-4">
-            <div className="space-y-2 rounded-md border p-3">
-              <p className="text-xs font-medium text-muted-foreground">Current repositories</p>
-              {activeWorkerRepositories.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No repositories attached yet.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {activeWorkerRepositories.map((repository) => (
-                    <li
-                      key={repository.id}
-                      className="flex items-center justify-between gap-2 rounded border p-2"
-                    >
-                      <div>
-                        <p className="text-xs font-medium">{repository.name}</p>
-                        <p className="text-[11px] text-muted-foreground">{repository.backend}</p>
-                      </div>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-7 px-2 text-xs"
-                        disabled={isSavingRepoSetup}
-                        onClick={() => void detachRepository(repository.id)}
+          <div className="-mx-4 flex-1 overflow-y-auto px-4">
+            <div className="space-y-4 pb-2">
+              {/* Current repositories */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">Attached repositories</p>
+                {activeWorkerRepositories.length === 0 ? (
+                  <p className="text-xs text-muted-foreground/60">None yet.</p>
+                ) : (
+                  <div className="space-y-1.5">
+                    {activeWorkerRepositories.map((repository) => (
+                      <div
+                        key={repository.id}
+                        className="flex items-center justify-between gap-2 rounded-md border px-3 py-2"
                       >
-                        Detach
-                      </Button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-
-            <div className="space-y-2 rounded-md border p-3">
-              <p className="text-xs font-medium text-muted-foreground">
-                Attach existing repository
-              </p>
-              <div className="flex items-center gap-2">
-                <select
-                  className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-                  value={selectedRepositoryIdToAttach}
-                  onChange={(event) => setSelectedRepositoryIdToAttach(event.target.value)}
-                >
-                  <option value="">Select repository</option>
-                  {attachableRepositories.map((repository) => (
-                    <option key={repository.id} value={repository.id}>
-                      {repository.name} ({repository.backend})
-                      {repository.worker ? ` - currently ${repository.worker.name}` : ""}
-                    </option>
-                  ))}
-                </select>
-                <Button
-                  className="h-9"
-                  disabled={!selectedRepositoryIdToAttach || isSavingRepoSetup}
-                  onClick={() => void attachSelectedRepository()}
-                >
-                  Attach
-                </Button>
-              </div>
-            </div>
-
-            <div className="space-y-2 rounded-md border p-3">
-              <p className="text-xs font-medium text-muted-foreground">Quick create and attach</p>
-              <div className="grid gap-2">
-                <Input
-                  placeholder="Repository name"
-                  value={quickRepositoryName}
-                  onChange={(event) => setQuickRepositoryName(event.target.value)}
-                  disabled={isSavingRepoSetup}
-                />
-                <select
-                  className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
-                  value={quickRepositoryBackend}
-                  onChange={(event) =>
-                    setQuickRepositoryBackend(event.target.value as (typeof backendOptions)[number])
-                  }
-                  disabled={isSavingRepoSetup}
-                >
-                  {backendOptions.map((backend) => (
-                    <option key={backend} value={backend}>
-                      {backend}
-                    </option>
-                  ))}
-                </select>
-                {quickRepositoryBackend === "s3" ? (
-                  <div className="space-y-2 rounded-md border p-2">
-                    <div className="flex flex-wrap gap-1">
-                      {s3Presets.map((preset) => (
+                        <div className="min-w-0">
+                          <p className="truncate text-xs font-medium">{repository.name}</p>
+                          <p className="text-[11px] text-muted-foreground">{repository.backend}</p>
+                        </div>
                         <Button
-                          key={preset.id}
-                          type="button"
                           size="sm"
                           variant="outline"
-                          className="h-7 px-2 text-[11px]"
+                          className="h-7 shrink-0 px-2 text-xs"
                           disabled={isSavingRepoSetup}
-                          onClick={() => setQuickS3((current) => applyS3Preset(current, preset))}
+                          onClick={() => void detachRepository(repository.id)}
                         >
-                          {preset.label}
+                          Detach
                         </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <Separator />
+
+              {/* Attach existing */}
+              <div className="space-y-2">
+                <p className="text-xs font-medium text-muted-foreground">
+                  Attach existing repository
+                </p>
+                <div className="flex items-center gap-2">
+                  <Select
+                    value={selectedRepositoryIdToAttach}
+                    onValueChange={(value) => setSelectedRepositoryIdToAttach(value ?? "")}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select repository" />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {attachableRepositories.length === 0 ? (
+                        <p className="px-2 py-3 text-center text-xs text-muted-foreground">
+                          No repositories available
+                        </p>
+                      ) : (
+                        attachableRepositories.map((repository) => (
+                          <SelectItem key={repository.id} value={repository.id}>
+                            {repository.name} ({repository.backend})
+                            {repository.worker ? ` \u2014 on ${repository.worker.name}` : ""}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectPopup>
+                  </Select>
+                  <Button
+                    className="h-8 shrink-0"
+                    disabled={!selectedRepositoryIdToAttach || isSavingRepoSetup}
+                    onClick={() => void attachSelectedRepository()}
+                  >
+                    Attach
+                  </Button>
+                </div>
+              </div>
+
+              <Separator />
+
+              {/* Quick create */}
+              <div className="space-y-3">
+                <p className="text-xs font-medium text-muted-foreground">Create new repository</p>
+
+                <div className="space-y-1">
+                  <Label htmlFor="repo-name">Name</Label>
+                  <Input
+                    id="repo-name"
+                    placeholder="my-backups"
+                    value={quickRepositoryName}
+                    onChange={(event) => setQuickRepositoryName(event.target.value)}
+                    disabled={isSavingRepoSetup}
+                  />
+                </div>
+
+                <div className="space-y-1">
+                  <Label htmlFor="repo-backend">Backend</Label>
+                  <Select
+                    value={quickRepositoryBackend}
+                    onValueChange={(value) =>
+                      setQuickRepositoryBackend((value ?? "s3") as (typeof backendOptions)[number])
+                    }
+                    disabled={isSavingRepoSetup}
+                  >
+                    <SelectTrigger id="repo-backend">
+                      <SelectValue placeholder="Backend" />
+                    </SelectTrigger>
+                    <SelectPopup>
+                      {backendOptions.map((backend) => (
+                        <SelectItem key={backend} value={backend}>
+                          {backend}
+                        </SelectItem>
                       ))}
+                    </SelectPopup>
+                  </Select>
+                </div>
+
+                {quickRepositoryBackend === "s3" ? (
+                  <div className="space-y-3 rounded-md border p-3">
+                    <div className="space-y-1.5">
+                      <p className="text-[11px] font-medium text-muted-foreground">Preset</p>
+                      <div className="flex flex-wrap gap-1">
+                        {s3Presets.map((preset) => (
+                          <Button
+                            key={preset.id}
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-7 px-2 text-[11px]"
+                            disabled={isSavingRepoSetup}
+                            onClick={() => setQuickS3((current) => applyS3Preset(current, preset))}
+                          >
+                            {preset.label}
+                          </Button>
+                        ))}
+                      </div>
                     </div>
-                    <Input
-                      placeholder="Endpoint (https://s3.amazonaws.com)"
-                      value={quickS3.endpoint}
-                      onChange={(event) =>
-                        setQuickS3((current) => ({ ...current, endpoint: event.target.value }))
-                      }
-                      disabled={isSavingRepoSetup}
-                    />
-                    <Input
-                      placeholder="Bucket"
-                      value={quickS3.bucket}
-                      onChange={(event) =>
-                        setQuickS3((current) => ({ ...current, bucket: event.target.value }))
-                      }
-                      disabled={isSavingRepoSetup}
-                    />
-                    <Input
-                      placeholder="Prefix"
-                      value={quickS3.prefix}
-                      onChange={(event) =>
-                        setQuickS3((current) => ({ ...current, prefix: event.target.value }))
-                      }
-                      disabled={isSavingRepoSetup}
-                    />
-                    <Input
-                      placeholder="Region"
-                      value={quickS3.region}
-                      onChange={(event) =>
-                        setQuickS3((current) => ({ ...current, region: event.target.value }))
-                      }
-                      disabled={isSavingRepoSetup}
-                    />
-                    <Input
-                      placeholder="Access Key ID"
-                      value={quickS3.accessKeyId}
-                      onChange={(event) =>
-                        setQuickS3((current) => ({ ...current, accessKeyId: event.target.value }))
-                      }
-                      disabled={isSavingRepoSetup}
-                    />
-                    <Input
-                      placeholder="Secret Access Key"
-                      value={quickS3.secretAccessKey}
-                      onChange={(event) =>
-                        setQuickS3((current) => ({
-                          ...current,
-                          secretAccessKey: event.target.value,
-                        }))
-                      }
-                      disabled={isSavingRepoSetup}
-                    />
-                    <Input
-                      placeholder="Session Token"
-                      value={quickS3.sessionToken}
-                      onChange={(event) =>
-                        setQuickS3((current) => ({ ...current, sessionToken: event.target.value }))
-                      }
-                      disabled={isSavingRepoSetup}
-                    />
-                    <Input
-                      placeholder="AWS Profile"
-                      value={quickS3.profile}
-                      onChange={(event) =>
-                        setQuickS3((current) => ({ ...current, profile: event.target.value }))
-                      }
-                      disabled={isSavingRepoSetup}
-                    />
-                    <Input
-                      placeholder="Storage Class"
-                      value={quickS3.storageClass}
-                      onChange={(event) =>
-                        setQuickS3((current) => ({ ...current, storageClass: event.target.value }))
-                      }
-                      disabled={isSavingRepoSetup}
-                    />
-                    <Input
-                      placeholder="ACL"
-                      value={quickS3.acl}
-                      onChange={(event) =>
-                        setQuickS3((current) => ({ ...current, acl: event.target.value }))
-                      }
-                      disabled={isSavingRepoSetup}
-                    />
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      <label className="flex items-center gap-2 text-xs">
-                        <input
-                          type="checkbox"
-                          checked={quickS3.pathStyle}
+
+                    <Separator />
+
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="space-y-1 sm:col-span-2">
+                        <Label htmlFor="s3-endpoint">Endpoint</Label>
+                        <Input
+                          id="s3-endpoint"
+                          placeholder="https://s3.amazonaws.com"
+                          value={quickS3.endpoint}
+                          onChange={(event) =>
+                            setQuickS3((current) => ({ ...current, endpoint: event.target.value }))
+                          }
+                          disabled={isSavingRepoSetup}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="s3-bucket">Bucket</Label>
+                        <Input
+                          id="s3-bucket"
+                          placeholder="my-bucket"
+                          value={quickS3.bucket}
+                          onChange={(event) =>
+                            setQuickS3((current) => ({ ...current, bucket: event.target.value }))
+                          }
+                          disabled={isSavingRepoSetup}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="s3-region">Region</Label>
+                        <Input
+                          id="s3-region"
+                          placeholder="us-east-1"
+                          value={quickS3.region}
+                          onChange={(event) =>
+                            setQuickS3((current) => ({ ...current, region: event.target.value }))
+                          }
+                          disabled={isSavingRepoSetup}
+                        />
+                      </div>
+                      <div className="space-y-1 sm:col-span-2">
+                        <Label htmlFor="s3-prefix">Prefix</Label>
+                        <Input
+                          id="s3-prefix"
+                          placeholder="backups/prod"
+                          value={quickS3.prefix}
+                          onChange={(event) =>
+                            setQuickS3((current) => ({ ...current, prefix: event.target.value }))
+                          }
+                          disabled={isSavingRepoSetup}
+                        />
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <Label htmlFor="s3-access-key">Access Key ID</Label>
+                        <Input
+                          id="s3-access-key"
+                          type="password"
+                          autoComplete="off"
+                          value={quickS3.accessKeyId}
+                          onChange={(event) =>
+                            setQuickS3((current) => ({ ...current, accessKeyId: event.target.value }))
+                          }
+                          disabled={isSavingRepoSetup}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="s3-secret-key">Secret Access Key</Label>
+                        <Input
+                          id="s3-secret-key"
+                          type="password"
+                          autoComplete="off"
+                          value={quickS3.secretAccessKey}
                           onChange={(event) =>
                             setQuickS3((current) => ({
                               ...current,
-                              pathStyle: event.target.checked,
+                              secretAccessKey: event.target.value,
                             }))
                           }
                           disabled={isSavingRepoSetup}
                         />
-                        Path Style
-                      </label>
-                      <label className="flex items-center gap-2 text-xs">
-                        <input
-                          type="checkbox"
-                          checked={quickS3.disableTls}
+                      </div>
+                      <div className="space-y-1 sm:col-span-2">
+                        <Label htmlFor="s3-session-token">Session Token</Label>
+                        <Input
+                          id="s3-session-token"
+                          type="password"
+                          autoComplete="off"
+                          value={quickS3.sessionToken}
                           onChange={(event) =>
+                            setQuickS3((current) => ({ ...current, sessionToken: event.target.value }))
+                          }
+                          disabled={isSavingRepoSetup}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="s3-profile">AWS Profile</Label>
+                        <Input
+                          id="s3-profile"
+                          placeholder="default"
+                          value={quickS3.profile}
+                          onChange={(event) =>
+                            setQuickS3((current) => ({ ...current, profile: event.target.value }))
+                          }
+                          disabled={isSavingRepoSetup}
+                        />
+                      </div>
+                    </div>
+
+                    <Separator />
+
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      <div className="space-y-1">
+                        <Label htmlFor="s3-storage-class">Storage Class</Label>
+                        <Input
+                          id="s3-storage-class"
+                          placeholder="STANDARD"
+                          value={quickS3.storageClass}
+                          onChange={(event) =>
+                            setQuickS3((current) => ({ ...current, storageClass: event.target.value }))
+                          }
+                          disabled={isSavingRepoSetup}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="s3-acl">ACL</Label>
+                        <Input
+                          id="s3-acl"
+                          placeholder="private"
+                          value={quickS3.acl}
+                          onChange={(event) =>
+                            setQuickS3((current) => ({ ...current, acl: event.target.value }))
+                          }
+                          disabled={isSavingRepoSetup}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-x-5 gap-y-2">
+                      <Label>
+                        <Checkbox
+                          checked={quickS3.pathStyle}
+                          onCheckedChange={(checked) =>
                             setQuickS3((current) => ({
                               ...current,
-                              disableTls: event.target.checked,
+                              pathStyle: checked === true,
+                            }))
+                          }
+                          disabled={isSavingRepoSetup}
+                        />
+                        Path style
+                      </Label>
+                      <Label>
+                        <Checkbox
+                          checked={quickS3.disableTls}
+                          onCheckedChange={(checked) =>
+                            setQuickS3((current) => ({
+                              ...current,
+                              disableTls: checked === true,
                             }))
                           }
                           disabled={isSavingRepoSetup}
                         />
                         Disable TLS
-                      </label>
-                      <label className="flex items-center gap-2 text-xs">
-                        <input
-                          type="checkbox"
+                      </Label>
+                      <Label>
+                        <Checkbox
                           checked={quickS3.noVerifySsl}
-                          onChange={(event) =>
+                          onCheckedChange={(checked) =>
                             setQuickS3((current) => ({
                               ...current,
-                              noVerifySsl: event.target.checked,
+                              noVerifySsl: checked === true,
                             }))
                           }
                           disabled={isSavingRepoSetup}
                         />
-                        Skip SSL Verify
-                      </label>
+                        Skip SSL verify
+                      </Label>
                     </div>
-                    <p className="rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+
+                    <p className="rounded bg-muted px-2 py-1 text-[11px] font-mono text-muted-foreground">
                       {quickS3Preview}
                     </p>
                   </div>
                 ) : (
+                  <div className="space-y-1">
+                    <Label htmlFor="repo-path">Repository path</Label>
+                    <Input
+                      id="repo-path"
+                      placeholder="/path/to/repo"
+                      value={quickRepositoryPath}
+                      onChange={(event) => setQuickRepositoryPath(event.target.value)}
+                      disabled={isSavingRepoSetup}
+                    />
+                  </div>
+                )}
+
+                <div className="space-y-1">
+                  <Label htmlFor="repo-password">Password (optional)</Label>
                   <Input
-                    placeholder="Repository path"
-                    value={quickRepositoryPath}
-                    onChange={(event) => setQuickRepositoryPath(event.target.value)}
+                    id="repo-password"
+                    type="password"
+                    autoComplete="off"
+                    value={quickRepositoryPassword}
+                    onChange={(event) => setQuickRepositoryPassword(event.target.value)}
                     disabled={isSavingRepoSetup}
                   />
-                )}
-                <Input
-                  placeholder="Password (optional)"
-                  value={quickRepositoryPassword}
-                  onChange={(event) => setQuickRepositoryPassword(event.target.value)}
-                  disabled={isSavingRepoSetup}
-                />
+                </div>
+
+                <Button
+                  className="h-8 gap-1 text-xs"
+                  disabled={isSavingRepoSetup || !quickRepositoryName.trim()}
+                  onClick={() => void createAndAttachRepository()}
+                >
+                  <RiAddLine className="size-3.5" />
+                  Create + Attach
+                </Button>
               </div>
-              <Button
-                variant="outline"
-                className="h-8 gap-1 text-xs"
-                disabled={isSavingRepoSetup}
-                onClick={() => void createAndAttachRepository()}
-              >
-                <Plus className="size-3.5" />
-                Create + Attach
-              </Button>
             </div>
           </div>
 
@@ -1372,7 +1442,7 @@ export default function WorkersPage() {
     <Suspense
       fallback={
         <div className="space-y-2">
-          <h1 className="text-2xl font-semibold tracking-tight">Workers</h1>
+          <h1 className="text-2xl font-semibold tracking-tight">Worker Fleet</h1>
           <p className="text-sm text-muted-foreground">Loading workers...</p>
         </div>
       }

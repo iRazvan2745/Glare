@@ -6,17 +6,18 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
+use chrono::{Datelike, Duration as ChronoDuration, Local, Timelike};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env,
     fs,
     net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
     process::Command,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
     },
     time::{Instant, SystemTime, UNIX_EPOCH},
@@ -34,6 +35,9 @@ struct AppState {
     error_total: Arc<AtomicU64>,
     started_at: Instant,
     client: reqwest::Client,
+    synced_backup_plans: Arc<Mutex<Vec<SyncedBackupPlan>>>,
+    executed_plan_ticks: Arc<Mutex<HashSet<String>>>,
+    pending_reports: Arc<Mutex<Vec<PendingReport>>>,
 }
 
 #[derive(Serialize)]
@@ -94,7 +98,7 @@ struct RusticStatsResponse {
     rustic: RusticCommandResult,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct RusticBackupRequest {
     repository: String,
@@ -104,6 +108,32 @@ struct RusticBackupRequest {
     paths: Vec<String>,
     tags: Option<Vec<String>>,
     dry_run: Option<bool>,
+}
+
+#[derive(Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SyncedBackupPlan {
+    id: String,
+    cron: String,
+    request: RusticBackupRequest,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct BackupPlanSyncResponse {
+    plans: Vec<SyncedBackupPlan>,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct BackupPlanReportRequest {
+    status: String,
+    error: Option<String>,
+    duration_ms: u64,
+    snapshot_id: Option<String>,
+    snapshot_time: Option<String>,
+    next_run_at: Option<String>,
+    output: Value,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +150,19 @@ struct RusticInitRequest {
 struct RusticRepositoryRequest {
     repository: String,
     password: Option<String>,
+    backend: Option<String>,
+    options: Option<HashMap<String, String>>,
+}
+
+const PENDING_REPORTS_MAX: usize = 500;
+const PENDING_REPORT_MAX_ATTEMPTS: u32 = 20;
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PendingReport {
+    url: String,
+    payload: BackupPlanReportRequest,
+    attempts: u32,
 }
 
 #[derive(Deserialize)]
@@ -129,6 +172,8 @@ struct RusticSnapshotFilesRequest {
     snapshot: String,
     path: Option<String>,
     password: Option<String>,
+    backend: Option<String>,
+    options: Option<HashMap<String, String>>,
 }
 
 #[derive(Deserialize)]
@@ -299,6 +344,7 @@ async fn main() {
             std::process::exit(2);
         });
 
+    let pending_reports = load_pending_reports(&cli.state_dir);
     let state = AppState {
         bearer_token: cli.api_token,
         master_api_endpoint: cli.master_api_endpoint,
@@ -309,6 +355,9 @@ async fn main() {
         error_total: Arc::new(AtomicU64::new(0)),
         started_at: Instant::now(),
         client: reqwest::Client::new(),
+        synced_backup_plans: Arc::new(Mutex::new(Vec::new())),
+        executed_plan_ticks: Arc::new(Mutex::new(HashSet::new())),
+        pending_reports: Arc::new(Mutex::new(pending_reports)),
     };
 
     let app = Router::new()
@@ -334,6 +383,18 @@ async fn main() {
     let sync_state = state.clone();
     tokio::spawn(async move {
         sync_stats_loop(sync_state).await;
+    });
+    let plan_sync_state = state.clone();
+    tokio::spawn(async move {
+        sync_backup_plans_loop(plan_sync_state).await;
+    });
+    let plan_exec_state = state.clone();
+    tokio::spawn(async move {
+        execute_synced_backup_plans_loop(plan_exec_state).await;
+    });
+    let flush_state = state.clone();
+    tokio::spawn(async move {
+        flush_pending_reports_loop(flush_state).await;
     });
 
     let listener = tokio::net::TcpListener::bind(addr)
@@ -567,6 +628,118 @@ async fn run_rclone_command(
     })
 }
 
+async fn prepare_repository_for_rclone(
+    state: &AppState,
+    mut repository: String,
+    backend: Option<&str>,
+    options: &HashMap<String, String>,
+    operation: &str,
+) -> Result<String, (StatusCode, Json<ApiErrorResponse>)> {
+    if backend != Some("rclone") {
+        if !options.is_empty() {
+            log_warn(format!(
+                "{operation} received repository options, but backend is not rclone; ignoring options"
+            ));
+        }
+        return Ok(repository);
+    }
+
+    let remote_from_repository = repository
+        .strip_prefix("rclone:")
+        .and_then(|value| value.split_once(':'))
+        .map(|(remote, _)| remote.to_string());
+    let remote_name = options
+        .get("rclone.remote")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or(remote_from_repository)
+        .ok_or_else(|| {
+            api_error(
+                StatusCode::BAD_REQUEST,
+                "rclone backend requires `rclone.remote` option or repository path in format rclone:<remote>:<path>",
+            )
+        })?;
+
+    let rclone_type = options
+        .get("rclone.type")
+        .or_else(|| options.get("rclone.config.type"))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let has_rclone_config = options.keys().any(|key| key.starts_with("rclone.config."));
+
+    if let Some(rclone_type) = rclone_type {
+        let mut rclone_args = vec![
+            "config".to_string(),
+            "create".to_string(),
+            remote_name.clone(),
+            rclone_type,
+        ];
+        let mut rclone_preview = vec![
+            "rclone".to_string(),
+            "config".to_string(),
+            "create".to_string(),
+            remote_name.clone(),
+            options
+                .get("rclone.type")
+                .or_else(|| options.get("rclone.config.type"))
+                .map(|value| value.trim().to_string())
+                .unwrap_or_default(),
+        ];
+
+        let mut rclone_config_items = options
+            .iter()
+            .filter_map(|(key, value)| {
+                key.strip_prefix("rclone.config.")
+                    .filter(|trimmed| !trimmed.is_empty() && *trimmed != "type")
+                    .map(|trimmed| (trimmed.to_string(), value.to_string()))
+            })
+            .collect::<Vec<_>>();
+        rclone_config_items.sort_by(|a, b| a.0.cmp(&b.0));
+
+        for (key, value) in rclone_config_items {
+            rclone_args.push(key.clone());
+            rclone_args.push(value.clone());
+            rclone_preview.push(key.clone());
+            rclone_preview.push(if is_sensitive_key(&key) {
+                "***".to_string()
+            } else {
+                value
+            });
+        }
+        rclone_args.push("--non-interactive".to_string());
+        rclone_preview.push("--non-interactive".to_string());
+
+        let rclone_result = run_rclone_command(state, rclone_args, rclone_preview).await?;
+        if !rclone_result.success {
+            let reason = first_useful_error_line(&rclone_result.stderr)
+                .unwrap_or_else(|| "rclone config create failed".to_string());
+            return Err(api_error(
+                StatusCode::BAD_GATEWAY,
+                format!("failed to create rclone config: {reason}"),
+            ));
+        }
+    } else if has_rclone_config {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "rclone backend requires option `rclone.type` (example: rclone.type=s3)",
+        ));
+    } else {
+        log_info(format!(
+            "skipping rclone config create for {operation}; no rclone.type provided"
+        ));
+    }
+
+    if !repository.starts_with("rclone:") {
+        let normalized_path = repository.trim_start_matches('/');
+        repository = format!("rclone:{remote_name}:{normalized_path}");
+        log_info(format!(
+            "normalized repository for rclone {operation}: {repository}"
+        ));
+    }
+
+    Ok(repository)
+}
+
 async fn rustic_version(
     State(state): State<AppState>,
 ) -> Result<Json<RusticVersionResponse>, (StatusCode, Json<ApiErrorResponse>)> {
@@ -617,6 +790,14 @@ async fn rustic_repository_snapshots(
             "repository is required for snapshots",
         ));
     }
+    let repository = prepare_repository_for_rclone(
+        &state,
+        repository.to_string(),
+        payload.backend.as_deref(),
+        &payload.options.unwrap_or_default(),
+        "snapshot listing",
+    )
+    .await?;
 
     let mut env_vars = Vec::new();
     if let Some(password) = payload.password {
@@ -630,7 +811,7 @@ async fn rustic_repository_snapshots(
         &state,
         vec![
             "--repository".to_string(),
-            repository.to_string(),
+            repository,
             "snapshots".to_string(),
             "--json".to_string(),
             "--no-progress".to_string(),
@@ -667,6 +848,14 @@ async fn rustic_snapshot_files(
             "snapshot is required for file listing",
         ));
     }
+    let repository = prepare_repository_for_rclone(
+        &state,
+        repository.to_string(),
+        payload.backend.as_deref(),
+        &payload.options.unwrap_or_default(),
+        "snapshot file listing",
+    )
+    .await?;
 
     let mut env_vars = Vec::new();
     if let Some(password) = payload.password {
@@ -685,7 +874,7 @@ async fn rustic_snapshot_files(
 
     let args = vec![
         "--repository".to_string(),
-        repository.to_string(),
+        repository,
         "ls".to_string(),
         "--json".to_string(),
         "--no-progress".to_string(),
@@ -715,6 +904,14 @@ async fn rustic_check(
             "repository is required for check",
         ));
     }
+    let repository = prepare_repository_for_rclone(
+        &state,
+        repository.to_string(),
+        payload.backend.as_deref(),
+        &payload.options.unwrap_or_default(),
+        "check",
+    )
+    .await?;
 
     let mut env_vars = Vec::new();
     if let Some(password) = payload.password {
@@ -728,7 +925,7 @@ async fn rustic_check(
         &state,
         vec![
             "--repository".to_string(),
-            repository.to_string(),
+            repository,
             "check".to_string(),
             "--no-progress".to_string(),
         ],
@@ -757,6 +954,14 @@ async fn rustic_repair_index(
             "repository is required for repair index",
         ));
     }
+    let repository = prepare_repository_for_rclone(
+        &state,
+        repository.to_string(),
+        payload.backend.as_deref(),
+        &payload.options.unwrap_or_default(),
+        "repair index",
+    )
+    .await?;
 
     let mut env_vars = Vec::new();
     if let Some(password) = payload.password {
@@ -770,7 +975,7 @@ async fn rustic_repair_index(
         &state,
         vec![
             "--repository".to_string(),
-            repository.to_string(),
+            repository,
             "repair".to_string(),
             "index".to_string(),
             "--no-progress".to_string(),
@@ -808,10 +1013,10 @@ async fn rustic_stats(
     Ok(Json(RusticStatsResponse { worker, rustic }))
 }
 
-async fn rustic_backup(
-    State(state): State<AppState>,
-    Json(payload): Json<RusticBackupRequest>,
-) -> Result<Json<RusticBackupResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+async fn execute_backup_request(
+    state: &AppState,
+    payload: RusticBackupRequest,
+) -> Result<RusticCommandResult, (StatusCode, Json<ApiErrorResponse>)> {
     let mut repository = payload.repository.trim().to_string();
     if repository.is_empty() {
         return Err(api_error(
@@ -903,7 +1108,7 @@ async fn rustic_backup(
         rclone_args.push("--non-interactive".to_string());
         rclone_preview.push("--non-interactive".to_string());
 
-        let rclone_result = run_rclone_command(&state, rclone_args, rclone_preview).await?;
+        let rclone_result = run_rclone_command(state, rclone_args, rclone_preview).await?;
         if !rclone_result.success {
             let reason = first_useful_error_line(&rclone_result.stderr)
                 .unwrap_or_else(|| "rclone config create failed".to_string());
@@ -961,14 +1166,22 @@ async fn rustic_backup(
         }
     }
 
-    let worker = worker_runtime_stats(&state);
-    let rustic = run_rustic_command(&state, args, env_vars, None).await?;
-
+    let rustic = run_rustic_command(state, args, env_vars, None).await?;
     if !rustic.success {
         let reason =
             first_useful_error_line(&rustic.stderr).unwrap_or_else(|| "backup command failed".to_string());
         return Err(api_error(StatusCode::BAD_GATEWAY, reason));
     }
+
+    Ok(rustic)
+}
+
+async fn rustic_backup(
+    State(state): State<AppState>,
+    Json(payload): Json<RusticBackupRequest>,
+) -> Result<Json<RusticBackupResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let worker = worker_runtime_stats(&state);
+    let rustic = execute_backup_request(&state, payload).await?;
 
     Ok(Json(RusticBackupResponse { worker, rustic }))
 }
@@ -1365,6 +1578,523 @@ async fn sync_stats_loop(state: AppState) {
             Err(error) => {
                 log_error(format!("worker stats sync failed: {error}"));
             }
+        }
+    }
+}
+
+fn extract_snapshot_ref(parsed_json: Option<&Value>) -> (Option<String>, Option<String>) {
+    let Some(value) = parsed_json else {
+        return (None, None);
+    };
+
+    let candidate = if let Some(array) = value.as_array() {
+        array.first()
+    } else {
+        Some(value)
+    };
+
+    let Some(object) = candidate.and_then(|entry| entry.as_object()) else {
+        return (None, None);
+    };
+
+    let snapshot_id = object
+        .get("snapshotId")
+        .and_then(Value::as_str)
+        .or_else(|| object.get("id").and_then(Value::as_str))
+        .map(ToOwned::to_owned);
+    let snapshot_time = object
+        .get("snapshotTime")
+        .and_then(Value::as_str)
+        .or_else(|| object.get("time").and_then(Value::as_str))
+        .map(ToOwned::to_owned);
+
+    (snapshot_id, snapshot_time)
+}
+
+fn parse_cron_field(raw: &str, min: u32, max: u32) -> Option<HashSet<u32>> {
+    let mut values = HashSet::new();
+
+    for chunk_raw in raw.split(',') {
+        let chunk = chunk_raw.trim();
+        if chunk.is_empty() {
+            return None;
+        }
+
+        let (base_raw, step_raw) = chunk
+            .split_once('/')
+            .map(|(base, step)| (base, Some(step)))
+            .unwrap_or((chunk, None));
+        let step = match step_raw {
+            Some(step_str) => step_str.parse::<u32>().ok()?,
+            None => 1,
+        };
+        if step == 0 {
+            return None;
+        }
+
+        let mut range_min = min;
+        let mut range_max = max;
+        if base_raw != "*" {
+            if let Some((start_raw, end_raw)) = base_raw.split_once('-') {
+                range_min = start_raw.parse::<u32>().ok()?;
+                range_max = end_raw.parse::<u32>().ok()?;
+            } else {
+                let single = base_raw.parse::<u32>().ok()?;
+                range_min = single;
+                range_max = single;
+            }
+        }
+
+        if range_min < min || range_max > max || range_min > range_max {
+            return None;
+        }
+        let mut value = range_min;
+        while value <= range_max {
+            values.insert(value);
+            value = match value.checked_add(step) {
+                Some(next) => next,
+                None => break,
+            };
+        }
+    }
+
+    Some(values)
+}
+
+struct ParsedCron {
+    minute: HashSet<u32>,
+    hour: HashSet<u32>,
+    day_of_month: HashSet<u32>,
+    month: HashSet<u32>,
+    day_of_week: HashSet<u32>,
+    is_day_of_month_wildcard: bool,
+    is_day_of_week_wildcard: bool,
+}
+
+fn parse_cron_expression(cron: &str) -> Option<ParsedCron> {
+    let parts = cron.split_whitespace().collect::<Vec<_>>();
+    if parts.len() != 5 {
+        return None;
+    }
+
+    let minute_field = parts[0];
+    let hour_field = parts[1];
+    let day_of_month_field = parts[2];
+    let month_field = parts[3];
+    let day_of_week_field = parts[4];
+
+    let minute = parse_cron_field(minute_field, 0, 59)?;
+    let hour = parse_cron_field(hour_field, 0, 23)?;
+    let day_of_month = parse_cron_field(day_of_month_field, 1, 31)?;
+    let month = parse_cron_field(month_field, 1, 12)?;
+    let day_of_week = parse_cron_field(day_of_week_field, 0, 6)?;
+
+    Some(ParsedCron {
+        minute,
+        hour,
+        day_of_month,
+        month,
+        day_of_week,
+        is_day_of_month_wildcard: day_of_month_field == "*",
+        is_day_of_week_wildcard: day_of_week_field == "*",
+    })
+}
+
+fn cron_matches_now(parsed: &ParsedCron) -> bool {
+    let now = Local::now();
+    let minute = now.minute();
+    let hour = now.hour();
+    let day_of_month = now.day();
+    let month = now.month();
+    let day_of_week = now.weekday().num_days_from_sunday();
+
+    if !parsed.minute.contains(&minute)
+        || !parsed.hour.contains(&hour)
+        || !parsed.month.contains(&month)
+    {
+        return false;
+    }
+
+    let dom_match = parsed.day_of_month.contains(&day_of_month);
+    let dow_match = parsed.day_of_week.contains(&day_of_week);
+    if parsed.is_day_of_month_wildcard && parsed.is_day_of_week_wildcard {
+        return true;
+    }
+    if parsed.is_day_of_month_wildcard {
+        return dow_match;
+    }
+    if parsed.is_day_of_week_wildcard {
+        return dom_match;
+    }
+
+    dom_match || dow_match
+}
+
+fn compute_next_run_at(cron: &str) -> Option<String> {
+    let parsed = parse_cron_expression(cron)?;
+    let mut cursor = Local::now() + ChronoDuration::minutes(1);
+    cursor = cursor
+        .with_second(0)?
+        .with_nanosecond(0)?;
+    for _ in 0..(60 * 24 * 366) {
+        let minute = cursor.minute();
+        let hour = cursor.hour();
+        let day_of_month = cursor.day();
+        let month = cursor.month();
+        let day_of_week = cursor.weekday().num_days_from_sunday();
+
+        if parsed.minute.contains(&minute)
+            && parsed.hour.contains(&hour)
+            && parsed.month.contains(&month)
+        {
+            let dom_match = parsed.day_of_month.contains(&day_of_month);
+            let dow_match = parsed.day_of_week.contains(&day_of_week);
+            let matches = if parsed.is_day_of_month_wildcard && parsed.is_day_of_week_wildcard {
+                true
+            } else if parsed.is_day_of_month_wildcard {
+                dow_match
+            } else if parsed.is_day_of_week_wildcard {
+                dom_match
+            } else {
+                dom_match || dow_match
+            };
+            if matches {
+                return Some(cursor.to_rfc3339());
+            }
+        }
+        cursor += ChronoDuration::minutes(1);
+    }
+    None
+}
+
+async fn sync_backup_plans_loop(state: AppState) {
+    let mut interval = time::interval(Duration::from_secs(30));
+    let sync_url = format!(
+        "{}/api/workers/backup-plans/sync",
+        state.master_api_endpoint.trim_end_matches('/')
+    );
+
+    loop {
+        interval.tick().await;
+
+        let response = state
+            .client
+            .post(&sync_url)
+            .header("Authorization", format!("Bearer {}", state.bearer_token))
+            .send()
+            .await;
+
+        let synced_plans = match response {
+            Ok(response) if response.status().is_success() => {
+                match response.json::<BackupPlanSyncResponse>().await {
+                    Ok(payload) => payload.plans,
+                    Err(error) => {
+                        log_error(format!("failed to decode backup plan sync response: {error}"));
+                        continue;
+                    }
+                }
+            }
+            Ok(response) => {
+                let status = response.status();
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "unable to read response body".to_string());
+                log_error(format!("backup plan sync failed: {status} - {body}"));
+                continue;
+            }
+            Err(error) => {
+                log_error(format!("backup plan sync failed: {error}"));
+                continue;
+            }
+        };
+
+        if let Ok(mut plans) = state.synced_backup_plans.lock() {
+            *plans = synced_plans;
+            log_info(format!("backup plans synced count={}", plans.len()));
+        } else {
+            log_error("failed to lock synced backup plans cache");
+        }
+    }
+}
+
+fn enqueue_pending_report(state: &AppState, report: PendingReport) {
+    if let Ok(mut queue) = state.pending_reports.lock() {
+        if queue.len() >= PENDING_REPORTS_MAX {
+            log_warn(format!(
+                "pending reports queue full ({PENDING_REPORTS_MAX}), dropping oldest entry"
+            ));
+            queue.remove(0);
+        }
+        log_info(format!(
+            "queuing pending report url={} attempt={}",
+            report.url, report.attempts
+        ));
+        queue.push(report);
+    } else {
+        log_error("failed to lock pending reports queue");
+    }
+}
+
+async fn run_synced_backup_plan(state: AppState, plan: SyncedBackupPlan) {
+    let started = Instant::now();
+    let report_url = format!(
+        "{}/api/workers/backup-plans/{}/report",
+        state.master_api_endpoint.trim_end_matches('/'),
+        plan.id
+    );
+
+    let (run_status, error, snapshot_id, snapshot_time, output_value) =
+        match execute_backup_request(&state, plan.request).await {
+            Ok(rustic) => {
+                let (snapshot_id, snapshot_time) = extract_snapshot_ref(rustic.parsed_json.as_ref());
+                let output = serde_json::to_value(&rustic).unwrap_or_else(|_| Value::Null);
+                ("success".to_string(), None, snapshot_id, snapshot_time, output)
+            }
+            Err((_, error_response)) => {
+                let error = error_response.0.error;
+                ("failed".to_string(), Some(error), None, None, Value::Null)
+            }
+        };
+
+    let payload = BackupPlanReportRequest {
+        status: run_status,
+        error,
+        duration_ms: started.elapsed().as_millis() as u64,
+        snapshot_id,
+        snapshot_time,
+        next_run_at: compute_next_run_at(&plan.cron),
+        output: output_value,
+    };
+
+    let should_queue = match state
+        .client
+        .post(&report_url)
+        .header("Authorization", format!("Bearer {}", state.bearer_token))
+        .json(&payload)
+        .send()
+        .await
+    {
+        Ok(response) if response.status().is_success() => {
+            log_info(format!(
+                "backup plan run reported plan_id={} status={}",
+                plan.id, payload.status
+            ));
+            false
+        }
+        Ok(response) => {
+            let status = response.status();
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "unable to read response body".to_string());
+            log_error(format!(
+                "backup plan report failed plan_id={} status={} body={} — queuing for retry",
+                plan.id, status, body
+            ));
+            true
+        }
+        Err(error) => {
+            log_error(format!(
+                "backup plan report request failed plan_id={} error={} — queuing for retry",
+                plan.id, error
+            ));
+            true
+        }
+    };
+
+    if should_queue {
+        enqueue_pending_report(
+            &state,
+            PendingReport {
+                url: report_url,
+                payload,
+                attempts: 1,
+            },
+        );
+    }
+}
+
+fn pending_reports_path(state_dir: &str) -> PathBuf {
+    PathBuf::from(state_dir).join("pending_reports.json")
+}
+
+fn load_pending_reports(state_dir: &str) -> Vec<PendingReport> {
+    let path = pending_reports_path(state_dir);
+    match fs::read_to_string(&path) {
+        Ok(data) => match serde_json::from_str::<Vec<PendingReport>>(&data) {
+            Ok(reports) => {
+                if !reports.is_empty() {
+                    log_info(format!(
+                        "loaded {} pending reports from {}",
+                        reports.len(),
+                        path.display()
+                    ));
+                }
+                reports
+            }
+            Err(err) => {
+                log_warn(format!(
+                    "failed to parse pending reports from {}: {err}",
+                    path.display()
+                ));
+                Vec::new()
+            }
+        },
+        Err(_) => Vec::new(),
+    }
+}
+
+fn save_pending_reports(state_dir: &str, reports: &[PendingReport]) {
+    let path = pending_reports_path(state_dir);
+    let _ = fs::create_dir_all(state_dir);
+    match serde_json::to_string(reports) {
+        Ok(json) => {
+            if let Err(err) = fs::write(&path, json) {
+                log_warn(format!(
+                    "failed to persist pending reports to {}: {err}",
+                    path.display()
+                ));
+            }
+        }
+        Err(err) => {
+            log_warn(format!("failed to serialize pending reports: {err}"));
+        }
+    }
+}
+
+async fn flush_pending_reports_loop(state: AppState) {
+    let mut interval = time::interval(Duration::from_secs(30));
+    loop {
+        interval.tick().await;
+
+        let items: Vec<PendingReport> = match state.pending_reports.lock() {
+            Ok(mut queue) => {
+                let taken = queue.drain(..).collect();
+                taken
+            }
+            Err(_) => {
+                log_error("failed to lock pending reports queue for flush");
+                continue;
+            }
+        };
+
+        if items.is_empty() {
+            continue;
+        }
+
+        log_info(format!("flushing {} pending reports", items.len()));
+        let mut still_pending = Vec::new();
+
+        for mut item in items {
+            let result = state
+                .client
+                .post(&item.url)
+                .header("Authorization", format!("Bearer {}", state.bearer_token))
+                .json(&item.payload)
+                .send()
+                .await;
+
+            let delivered = match result {
+                Ok(resp) if resp.status().is_success() => {
+                    log_info(format!(
+                        "pending report delivered url={} after {} attempts",
+                        item.url, item.attempts
+                    ));
+                    true
+                }
+                Ok(resp) => {
+                    log_warn(format!(
+                        "pending report still failing url={} status={} attempt={}",
+                        item.url,
+                        resp.status(),
+                        item.attempts
+                    ));
+                    false
+                }
+                Err(err) => {
+                    log_warn(format!(
+                        "pending report still failing url={} error={} attempt={}",
+                        item.url, err, item.attempts
+                    ));
+                    false
+                }
+            };
+
+            if !delivered {
+                item.attempts += 1;
+                if item.attempts > PENDING_REPORT_MAX_ATTEMPTS {
+                    log_warn(format!(
+                        "dropping pending report after {} attempts url={}",
+                        item.attempts, item.url
+                    ));
+                } else {
+                    still_pending.push(item);
+                }
+            }
+        }
+
+        if let Ok(mut queue) = state.pending_reports.lock() {
+            for item in still_pending {
+                if queue.len() < PENDING_REPORTS_MAX {
+                    queue.push(item);
+                }
+            }
+            save_pending_reports(&state.state_dir, &queue);
+        }
+    }
+}
+
+async fn execute_synced_backup_plans_loop(state: AppState) {
+    let mut interval = time::interval(Duration::from_secs(15));
+    loop {
+        interval.tick().await;
+
+        let plans = match state.synced_backup_plans.lock() {
+            Ok(guard) => guard.clone(),
+            Err(_) => {
+                log_error("failed to lock synced backup plans cache");
+                continue;
+            }
+        };
+
+        if plans.is_empty() {
+            continue;
+        }
+
+        for plan in plans {
+            let parsed = match parse_cron_expression(&plan.cron) {
+                Some(parsed) => parsed,
+                None => {
+                    log_warn(format!("invalid cron for plan {}: {}", plan.id, plan.cron));
+                    continue;
+                }
+            };
+            if !cron_matches_now(&parsed) {
+                continue;
+            }
+
+            let minute_tick_key = format!("{}:{}", plan.id, Local::now().format("%Y%m%d%H%M"));
+            let mut should_run = false;
+            if let Ok(mut executed) = state.executed_plan_ticks.lock() {
+                if executed.len() > 20_000 {
+                    executed.clear();
+                }
+                if !executed.contains(&minute_tick_key) {
+                    executed.insert(minute_tick_key);
+                    should_run = true;
+                }
+            } else {
+                log_error("failed to lock executed plan tick cache");
+            }
+            if !should_run {
+                continue;
+            }
+
+            let run_state = state.clone();
+            tokio::spawn(async move {
+                run_synced_backup_plan(run_state, plan).await;
+            });
         }
     }
 }

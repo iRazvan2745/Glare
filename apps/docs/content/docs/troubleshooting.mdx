@@ -1,0 +1,28 @@
+---
+title: Troubleshooting
+description: Common failure modes and corrective actions.
+---
+
+## Worker Offline
+
+- Verify worker process is running.
+- Verify `--master-api-endpoint` connectivity.
+- Verify sync token validity.
+
+## Plans Not Executing
+
+- Confirm worker receives plans from `/backup-plans/sync`.
+- Confirm cron expressions are valid 5-part cron.
+- Check worker logs for cron parse failures.
+
+## Reports Failing
+
+- Check worker can reach server.
+- Check sync token not rotated without worker restart.
+- Inspect server logs for auth/payload rejection.
+
+## `rustic`/`rclone` Errors
+
+- Verify binaries are installed in worker runtime.
+- Validate backend/options/repository path.
+- Confirm repository credentials.

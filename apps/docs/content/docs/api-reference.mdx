@@ -1,0 +1,36 @@
+---
+title: API Reference
+description: Primary API surfaces for UI, workers, and backup orchestration.
+---
+
+## Base URL
+
+- Local default: `http://localhost:3000`
+
+## Utility Endpoints
+
+- `GET /`
+- `GET /health`
+- `GET /openapi/json`
+- `GET /openapi`
+
+## Worker Management (User Auth)
+
+- `GET /api/workers`
+- `POST /api/workers`
+- `PATCH /api/workers/:id`
+- `DELETE /api/workers/:id`
+- `GET /api/workers/:id/sync-events`
+- `POST /api/workers/:id/rotate-sync-token`
+
+## Worker Sync (Worker Token)
+
+- `POST /api/workers/sync`
+- `POST /api/workers/backup-plans/sync`
+- `POST /api/workers/backup-plans/:id/report`
+
+## Rustic Domains (User Auth)
+
+- `/api/rustic/repositories*`
+- `/api/rustic/plans*`
+- `/api/rustic/events`

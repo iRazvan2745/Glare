@@ -1,9 +1,10 @@
 "use client";
 
-import { CalendarClock, ChevronDown, Loader2, Pencil, Play, Plus, ToggleLeft, ToggleRight, Trash2 } from "lucide-react";
+import { RiAddLine, RiArrowDownSLine, RiCalendarScheduleLine, RiLoader4Line } from "@remixicon/react";
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 
+import { ActionMenu, ControlPlaneEmptyState, KpiStat, SectionHeader, StatusBadge } from "@/components/control-plane";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -34,7 +35,9 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
+import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
+import { deriveHealthStatus } from "@/lib/control-plane/health";
 import { env } from "@glare/env/web";
 
 type WorkerRecord = {
@@ -270,6 +273,15 @@ function formatDate(value: string | null) {
   );
 }
 
+function formatDuration(value: number | null) {
+  if (!value || value <= 0) return "—";
+  const seconds = Math.floor(value / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rem = seconds % 60;
+  return `${minutes}m ${rem}s`;
+}
+
 function formFromPlan(plan: BackupPlan): PlanFormState {
   const workerIds =
     plan.workerIds.length > 0 ? plan.workerIds : plan.workers.map((worker) => worker.id);
@@ -317,15 +329,19 @@ export default function BackupPlansPage() {
 
     setIsLoading(true);
     try {
-      const [repoRes, planRes] = await Promise.all([
-        fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`, { credentials: "include" }),
-        fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans`, { credentials: "include" }),
+      const [repoData, planData] = await Promise.all([
+        apiFetchJson<{ repositories?: RepositoryRecord[] }>(
+          `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+          {
+            method: "GET",
+            retries: 1,
+          },
+        ),
+        apiFetchJson<{ plans?: BackupPlan[] }>(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans`, {
+          method: "GET",
+          retries: 1,
+        }),
       ]);
-      if (!repoRes.ok || !planRes.ok) throw new Error("Failed to load backup plans");
-
-      const repoData = (await repoRes.json()) as { repositories?: RepositoryRecord[] };
-      const planData = (await planRes.json()) as { plans?: BackupPlan[] };
-
       setRepositories(repoData.repositories ?? []);
       setPlans(planData.plans ?? []);
     } catch {
@@ -369,10 +385,8 @@ export default function BackupPlansPage() {
 
     setIsSaving(true);
     try {
-      const response = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans`, {
+      const data = await apiFetchJson<{ plan?: BackupPlan }>(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans`, {
         method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: createForm.name.trim(),
           repositoryId: createForm.repositoryId,
@@ -385,14 +399,8 @@ export default function BackupPlansPage() {
           enabled: createForm.enabled,
           ...retentionPayload(createForm),
         }),
+        retries: 1,
       });
-
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error || "Failed to create plan");
-      }
-
-      const data = (await response.json()) as { plan?: BackupPlan };
       if (data.plan) setPlans((current) => [data.plan!, ...current]);
 
       setIsCreateOpen(false);
@@ -427,10 +435,10 @@ export default function BackupPlansPage() {
 
     setIsSaving(true);
     try {
-      const response = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${editingId}`, {
+      const data = await apiFetchJson<{ plan?: BackupPlan }>(
+        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${editingId}`,
+        {
         method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: editForm.name.trim(),
           repositoryId: editForm.repositoryId,
@@ -443,14 +451,9 @@ export default function BackupPlansPage() {
           enabled: editForm.enabled,
           ...retentionPayload(editForm),
         }),
-      });
-
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error || "Failed to update plan");
-      }
-
-      const data = (await response.json()) as { plan?: BackupPlan };
+        retries: 1,
+      },
+      );
       if (data.plan) {
         setPlans((current) => current.map((plan) => (plan.id === data.plan!.id ? data.plan! : plan)));
       }
@@ -466,11 +469,10 @@ export default function BackupPlansPage() {
   async function removePlan(planId: string) {
     setIsSaving(true);
     try {
-      const response = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${planId}`, {
+      await apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${planId}`, {
         method: "DELETE",
-        credentials: "include",
+        retries: 1,
       });
-      if (!response.ok) throw new Error("Failed to delete plan");
       setPlans((current) => current.filter((plan) => plan.id !== planId));
       toast.success("Backup plan deleted.");
     } catch {
@@ -482,14 +484,14 @@ export default function BackupPlansPage() {
 
   async function togglePlan(plan: BackupPlan) {
     try {
-      const response = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${plan.id}`, {
+      const data = await apiFetchJson<{ plan?: BackupPlan }>(
+        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${plan.id}`,
+        {
         method: "PATCH",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: !plan.enabled }),
-      });
-      if (!response.ok) throw new Error("Failed to toggle plan");
-      const data = (await response.json()) as { plan?: BackupPlan };
+        retries: 1,
+      },
+      );
       if (data.plan) {
         setPlans((current) => current.map((entry) => (entry.id === data.plan!.id ? data.plan! : entry)));
       }
@@ -501,14 +503,10 @@ export default function BackupPlansPage() {
   async function runPlanNow(plan: BackupPlan) {
     setRunningPlanId(plan.id);
     try {
-      const response = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${plan.id}/run`, {
+      await apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${plan.id}/run`, {
         method: "POST",
-        credentials: "include",
+        retries: 1,
       });
-      if (!response.ok) {
-        const data = (await response.json().catch(() => null)) as { error?: string } | null;
-        throw new Error(data?.error || "Failed to trigger plan");
-      }
       toast.success(`Triggered "${plan.name}".`);
       await loadData();
     } catch (error) {
@@ -518,84 +516,63 @@ export default function BackupPlansPage() {
     }
   }
 
+  const nextRunSoonest = plans
+    .filter((plan) => Boolean(plan.nextRunAt))
+    .map((plan) => new Date(plan.nextRunAt!).getTime())
+    .sort((a, b) => a - b)[0];
+
   return (
     <div className="space-y-6">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Backup Plans</h1>
-          <p className="text-sm text-muted-foreground">
-            Create cron-based backup schedules for repositories.
-          </p>
-        </div>
-
-        <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
-          <DialogTrigger render={<Button size="sm" className="gap-2" />}>
-            <Plus className="size-4" />
-            New Plan
-          </DialogTrigger>
-          <DialogContent className="sm:max-w-xl">
-            <DialogHeader>
-              <DialogTitle>Create Backup Plan</DialogTitle>
-              <DialogDescription>
-                Define repository, workers, cron schedule, and backup paths.
-              </DialogDescription>
-            </DialogHeader>
-            <PlanForm
-              form={createForm}
-              setForm={setCreateForm}
-              repositories={repositories}
-              disabled={isSaving}
-            />
-            <DialogFooter>
-              <DialogClose render={<Button variant="outline" disabled={isSaving} />}>
-                Cancel
-              </DialogClose>
-              <Button disabled={isSaving} onClick={() => void createPlan()}>
-                {isSaving ? "Creating..." : "Create Plan"}
-              </Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
-      </div>
+      <SectionHeader
+        title="Schedules & Retention"
+        subtitle="Execution policy for snapshot cadence and retention windows."
+        actions={
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <DialogTrigger render={<Button size="sm" className="gap-2" />}>
+              <RiAddLine className="size-4" />
+              New Policy
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-xl">
+              <DialogHeader>
+                <DialogTitle>Create Schedule</DialogTitle>
+                <DialogDescription>
+                  Define repository, workers, cron cadence, and retention policy.
+                </DialogDescription>
+              </DialogHeader>
+              <PlanForm
+                form={createForm}
+                setForm={setCreateForm}
+                repositories={repositories}
+                disabled={isSaving}
+              />
+              <DialogFooter>
+                <DialogClose render={<Button variant="outline" disabled={isSaving} />}>
+                  Cancel
+                </DialogClose>
+                <Button disabled={isSaving} onClick={() => void createPlan()}>
+                  {isSaving ? "Creating..." : "Create Policy"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        }
+      />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Total plans</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">{plans.length}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Enabled</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">
-              {plans.filter((plan) => plan.enabled).length}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Failures</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">
-              {plans.filter((plan) => plan.lastStatus === "failed").length}
-            </p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground">Dry run plans</p>
-            <p className="mt-1 text-2xl font-semibold tabular-nums">
-              {plans.filter((plan) => plan.dryRun).length}
-            </p>
-          </CardContent>
-        </Card>
+        <KpiStat label="Total policies" value={plans.length} />
+        <KpiStat label="Enabled" value={plans.filter((plan) => plan.enabled).length} />
+        <KpiStat label="Failed (last 7d)" value={plans.filter((plan) => plan.lastStatus === "failed").length} />
+        <KpiStat
+          label="Next run (soonest)"
+          value={nextRunSoonest ? formatDate(new Date(nextRunSoonest).toISOString()) : "—"}
+        />
       </div>
 
       <Card>
         <CardHeader>
-          <CardTitle>Plan Directory</CardTitle>
+          <CardTitle>Retention Policies</CardTitle>
           <CardDescription>
-            Scheduler checks every 30 seconds and executes due plans.
+            Scheduler evaluates cadence every 30 seconds and executes due policy runs.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-2">
@@ -603,9 +580,11 @@ export default function BackupPlansPage() {
             <p className="py-8 text-center text-sm text-muted-foreground">Loading plans...</p>
           )}
           {!isLoading && plans.length === 0 && (
-            <p className="py-8 text-center text-sm text-muted-foreground">
-              No plans yet. Create your first cron schedule.
-            </p>
+            <ControlPlaneEmptyState
+              icon={RiCalendarScheduleLine}
+              title="No retention policies configured"
+              description="Create a schedule to enforce recovery point cadence and retention."
+            />
           )}
 
           {!isLoading &&
@@ -615,14 +594,20 @@ export default function BackupPlansPage() {
                 className="group flex items-center gap-3 rounded-lg border px-4 py-3 hover:bg-muted/30"
               >
                 <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted">
-                  <CalendarClock className="size-4 text-muted-foreground" />
+                  <RiCalendarScheduleLine className="size-4 text-muted-foreground" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-medium">{plan.name}</p>
-                    <Badge variant={plan.enabled ? "secondary" : "outline"}>
-                      {plan.enabled ? "Enabled" : "Disabled"}
-                    </Badge>
+                    <StatusBadge
+                      status={deriveHealthStatus({
+                        totalWorkers: plan.workers.length,
+                        offlineWorkers: plan.workers.filter((worker) => !worker.isOnline).length,
+                        errorRate24h: plan.lastStatus === "failed" ? 5 : 0,
+                        recentPlanFailures: plan.lastStatus === "failed" ? 1 : 0,
+                      })}
+                      label={plan.enabled ? "Enabled" : "Disabled"}
+                    />
                     <Badge variant="outline">{plan.cron}</Badge>
                     {plan.dryRun ? <Badge variant="outline">Dry run</Badge> : null}
                   </div>
@@ -636,39 +621,29 @@ export default function BackupPlansPage() {
                     {countPlanPaths(plan)} paths • Next: {formatDate(plan.nextRunAt)} • Last: {formatDate(plan.lastRunAt)}
                     {formatRetentionSummary(plan) ? ` • Retention: ${formatRetentionSummary(plan)}` : ""}
                   </p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    Last run duration: {formatDuration(plan.lastDurationMs)}
+                  </p>
                   {plan.lastStatus === "failed" && plan.lastError ? (
-                    <p className="truncate text-xs text-destructive">Last error: {plan.lastError}</p>
+                    <p className="truncate text-xs font-medium text-destructive">
+                      Investigate failure: {plan.lastError}
+                    </p>
                   ) : null}
                 </div>
-                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={() => void runPlanNow(plan)}
-                    disabled={runningPlanId === plan.id}
-                    title="Run now"
-                  >
-                    {runningPlanId === plan.id ? (
-                      <Loader2 className="size-4 animate-spin" />
-                    ) : (
-                      <Play className="size-4" />
-                    )}
-                  </Button>
-                  <Button variant="ghost" size="icon" onClick={() => void togglePlan(plan)}>
-                    {plan.enabled ? <ToggleRight className="size-4" /> : <ToggleLeft className="size-4" />}
-                  </Button>
-                  <Button variant="ghost" size="icon" onClick={() => startEdit(plan)}>
-                    <Pencil className="size-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="text-destructive hover:text-destructive"
-                    onClick={() => void removePlan(plan.id)}
-                  >
-                    <Trash2 className="size-4" />
-                  </Button>
-                </div>
+                <ActionMenu
+                  items={[
+                    {
+                      label: runningPlanId === plan.id ? "Running..." : "Run now",
+                      onSelect: () => void runPlanNow(plan),
+                    },
+                    {
+                      label: plan.enabled ? "Disable" : "Enable",
+                      onSelect: () => void togglePlan(plan),
+                    },
+                    { label: "Edit", onSelect: () => startEdit(plan) },
+                    { label: "Delete", onSelect: () => void removePlan(plan.id), destructive: true },
+                  ]}
+                />
               </div>
             ))}
         </CardContent>
@@ -677,9 +652,9 @@ export default function BackupPlansPage() {
       <Dialog open={Boolean(editingId)} onOpenChange={(open) => !open && setEditingId("")}>
         <DialogContent className="sm:max-w-xl">
           <DialogHeader>
-            <DialogTitle>Edit Backup Plan</DialogTitle>
+            <DialogTitle>Edit Schedule</DialogTitle>
             <DialogDescription>
-              Update schedule, repository, workers, and execution settings.
+              Update cadence, worker assignments, and retention constraints.
             </DialogDescription>
           </DialogHeader>
           <PlanForm
@@ -695,7 +670,7 @@ export default function BackupPlansPage() {
             <Button disabled={isSaving} onClick={() => void saveEdit()}>
               {isSaving ? (
                 <span className="inline-flex items-center gap-1.5">
-                  <Loader2 className="size-3.5 animate-spin" />
+                  <RiLoader4Line className="size-3.5 animate-spin" />
                   Saving
                 </span>
               ) : (
@@ -885,7 +860,7 @@ function PlanForm({
                 </Badge>
               )}
             </div>
-            <ChevronDown className="size-4 text-muted-foreground transition-transform [[data-state=closed]>&]:rotate-[-90deg]" />
+            <RiArrowDownSLine className="size-4 text-muted-foreground transition-transform [[data-state=closed]>&]:rotate-[-90deg]" />
           </CollapsibleTrigger>
           <CollapsibleContent>
             <div className="space-y-3 border-t px-3 pb-3 pt-2">

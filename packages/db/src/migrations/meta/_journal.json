@@ -162,6 +162,27 @@
       "when": 1771112400000,
       "tag": "0022_backup_plan_run_leases",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1771181972873,
+      "tag": "0023_discord_webhook_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1771183555117,
+      "tag": "0024_heavy_the_professor",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "7",
+      "when": 1771229636927,
+      "tag": "0025_happy_stepford_cuckoos",
+      "breakpoints": true
     }
   ]
 }

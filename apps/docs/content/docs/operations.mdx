@@ -1,0 +1,28 @@
+---
+title: Operations
+description: Day-2 runbooks for workers and backup execution.
+---
+
+## Add a Worker
+
+1. Create worker in UI/API.
+2. Capture sync token.
+3. Start worker with master endpoint, local endpoint, token.
+4. Confirm worker status is online.
+
+## Rotate Worker Token
+
+1. `POST /api/workers/:id/rotate-sync-token`
+2. Restart worker with new token.
+3. Verify heartbeat and plan sync resume.
+
+## Verify Plan Sync
+
+- Check worker logs for successful `backup plans synced` messages.
+- Confirm worker has assigned plans and valid cron.
+
+## Verify Execution
+
+- Check `backup_plan_run` rows appear for worker reports.
+- Check `backup_event` rows for success/failure transitions.
+- Check plan `lastStatus`, `lastError`, `lastDurationMs` updates.

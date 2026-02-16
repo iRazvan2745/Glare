@@ -3,10 +3,10 @@
 import { mergeProps } from "@base-ui/react/merge-props";
 import { useRender } from "@base-ui/react/use-render";
 import {
-  ChevronLeftIcon,
-  ChevronRightIcon,
-  MoreHorizontalIcon,
-} from "lucide-react";
+  RiArrowLeftSLine,
+  RiArrowRightSLine,
+  RiMoreFill,
+} from "@remixicon/react";
 import type * as React from "react";
 
 import { cn } from "@/lib/utils";
@@ -85,7 +85,7 @@ function PaginationPrevious({
       size="default"
       {...props}
     >
-      <ChevronLeftIcon className="sm:-ms-1" />
+      <RiArrowLeftSLine className="sm:-ms-1" />
       <span className="max-sm:hidden">Previous</span>
     </PaginationLink>
   );
@@ -103,7 +103,7 @@ function PaginationNext({
       {...props}
     >
       <span className="max-sm:hidden">Next</span>
-      <ChevronRightIcon className="sm:-me-1" />
+      <RiArrowRightSLine className="sm:-me-1" />
     </PaginationLink>
   );
 }
@@ -119,7 +119,7 @@ function PaginationEllipsis({
       data-slot="pagination-ellipsis"
       {...props}
     >
-      <MoreHorizontalIcon className="size-5 sm:size-4" />
+      <RiMoreFill className="size-5 sm:size-4" />
       <span className="sr-only">More pages</span>
     </span>
   );
