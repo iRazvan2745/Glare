@@ -1,10 +1,10 @@
 import { redirect } from "next/navigation";
-import { authClient } from "./auth-client";
+import { getServerSession } from "./server-session";
 
 export async function requireAuthUser() {
-  const session = await (await authClient.getSession()).data
+  const session = await getServerSession();
   if (!session?.user) {
-    redirect('/login');
+    redirect("/login");
   }
   return session.user;
 }

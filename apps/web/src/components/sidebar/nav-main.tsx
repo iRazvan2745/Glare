@@ -2,6 +2,9 @@
 
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -11,7 +14,7 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { cn } from "@/lib/utils";
-import { RiArrowDownSLine, RiArrowUpSLine } from "@remixicon/react";
+import { RiArrowDownSLine, RiArrowRightSLine } from "@remixicon/react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import type React from "react";
@@ -31,120 +34,133 @@ export type Route = {
   }[];
 };
 
+export type RouteGroup = {
+  label: string;
+  routes: Route[];
+};
+
 function isActiveHref(pathname: string, href: Href) {
   if (typeof href !== "string" || href === "#") return false;
-  return pathname === href || pathname.startsWith(`${href}/`);
+  const cleanHref = href.split("?")[0];
+  return pathname === cleanHref || pathname.startsWith(`${cleanHref}/`);
 }
 
-export default function DashboardNavigation({ routes }: { routes: Route[] }) {
+function NavItem({ route }: { route: Route }) {
   const pathname = usePathname();
   const { state } = useSidebar();
   const isCollapsed = state === "collapsed";
-  const [openCollapsible, setOpenCollapsible] = useState<string | null>(null);
+  const [isOpen, setIsOpen] = useState(false);
+
+  const hasSubRoutes = !!route.subs?.length;
+  const hasActiveSubRoute = route.subs?.some((sub) => isActiveHref(pathname, sub.link)) ?? false;
+  const isRouteActive = isActiveHref(pathname, route.link) || hasActiveSubRoute;
+
+  if (hasSubRoutes) {
+    return (
+      <Collapsible
+        open={!isCollapsed && (isOpen || hasActiveSubRoute)}
+        onOpenChange={setIsOpen}
+        className="w-full"
+      >
+        <SidebarMenuItem>
+          <CollapsibleTrigger
+            render={
+              <SidebarMenuButton
+                tooltip={route.title}
+                className={cn(
+                  "h-8 w-full rounded-md px-2 transition-colors",
+                  isRouteActive
+                    ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                    : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
+                )}
+              />
+            }
+          >
+            {route.icon && <span className="size-4 shrink-0 [&>svg]:size-4">{route.icon}</span>}
+            {!isCollapsed && <span className="flex-1 truncate text-sm">{route.title}</span>}
+            {!isCollapsed && (
+              <span className="ml-auto shrink-0">
+                {isOpen || hasActiveSubRoute ? (
+                  <RiArrowDownSLine className="size-4 text-sidebar-foreground/50" />
+                ) : (
+                  <RiArrowRightSLine className="size-4 text-sidebar-foreground/50" />
+                )}
+              </span>
+            )}
+          </CollapsibleTrigger>
+        </SidebarMenuItem>
+
+        {!isCollapsed && (
+          <CollapsibleContent>
+            <SidebarMenuSub className="ml-4 border-l border-sidebar-border pl-2">
+              {route.subs?.map((sub) => {
+                const isSubActive = isActiveHref(pathname, sub.link);
+                return (
+                  <SidebarMenuSubItem key={sub.title}>
+                    <SidebarMenuSubButton
+                      isActive={isSubActive}
+                      render={
+                        <Link
+                          href={sub.link as never}
+                          prefetch={true}
+                          className={cn(
+                            "flex h-7 items-center rounded-md px-2 text-sm transition-colors",
+                            isSubActive
+                              ? "font-medium text-sidebar-accent-foreground"
+                              : "text-sidebar-foreground/60 hover:text-sidebar-foreground",
+                          )}
+                        />
+                      }
+                    >
+                      {sub.title}
+                    </SidebarMenuSubButton>
+                  </SidebarMenuSubItem>
+                );
+              })}
+            </SidebarMenuSub>
+          </CollapsibleContent>
+        )}
+      </Collapsible>
+    );
+  }
 
   return (
-    <SidebarMenu>
-      {routes.map((route) => {
-        const hasSubRoutes = !!route.subs?.length;
-        const hasActiveSubRoute =
-          route.subs?.some((subRoute) => isActiveHref(pathname, subRoute.link)) ?? false;
-        const isRouteActive = isActiveHref(pathname, route.link) || hasActiveSubRoute;
-        const isOpen =
-          !isCollapsed &&
-          (openCollapsible === route.id || (openCollapsible === null && hasActiveSubRoute));
+    <SidebarMenuItem>
+      <SidebarMenuButton
+        isActive={isRouteActive}
+        tooltip={route.title}
+        className={cn(
+          "h-8 rounded-md px-2 transition-colors",
+          isRouteActive
+            ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+            : "text-sidebar-foreground/70 hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
+        )}
+        render={<Link href={route.link as never} prefetch={true} className="flex items-center" />}
+      >
+        {route.icon && <span className="size-4 shrink-0 [&>svg]:size-4">{route.icon}</span>}
+        {!isCollapsed && <span className="truncate text-sm">{route.title}</span>}
+      </SidebarMenuButton>
+    </SidebarMenuItem>
+  );
+}
 
-        return (
-          <SidebarMenuItem key={route.id}>
-            {hasSubRoutes ? (
-              <Collapsible
-                open={isOpen}
-                onOpenChange={(open) => setOpenCollapsible(open ? route.id : null)}
-                className="w-full"
-              >
-                <CollapsibleTrigger
-                  render={
-                    <SidebarMenuButton
-                      className={cn(
-                        "flex h-8 w-full items-center rounded-md px-2 transition-colors",
-                        isRouteActive
-                          ? "bg-sidebar-accent text-foreground"
-                          : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
-                        isCollapsed && "justify-center",
-                      )}
-                    />
-                  }
-                >
-                  {route.icon}
-                  {!isCollapsed && (
-                    <span className="ml-2 flex-1 text-sm font-medium">{route.title}</span>
-                  )}
-                  {!isCollapsed && hasSubRoutes && (
-                    <span className="ml-auto">
-                      {isOpen ? (
-                        <RiArrowUpSLine className="size-3.5" />
-                      ) : (
-                        <RiArrowDownSLine className="size-3.5" />
-                      )}
-                    </span>
-                  )}
-                </CollapsibleTrigger>
-
-                {!isCollapsed && (
-                  <CollapsibleContent>
-                    <SidebarMenuSub className="my-1 ml-3.5">
-                      {route.subs?.map((subRoute) => {
-                        const isSubRouteActive = isActiveHref(pathname, subRoute.link);
-
-                        return (
-                          <SidebarMenuSubItem
-                            key={`${route.id}-${subRoute.title}`}
-                            className="h-auto"
-                          >
-                            <SidebarMenuSubButton
-                              isActive={isSubRouteActive}
-                              render={
-                                <Link
-                                  href={subRoute.link as never}
-                                  prefetch={true}
-                                  className={cn(
-                                    "flex items-center rounded-md px-3 py-1 text-xs font-medium",
-                                    isSubRouteActive
-                                      ? "text-foreground"
-                                      : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
-                                  )}
-                                />
-                              }
-                            >
-                              {subRoute.title}
-                            </SidebarMenuSubButton>
-                          </SidebarMenuSubItem>
-                        );
-                      })}
-                    </SidebarMenuSub>
-                  </CollapsibleContent>
-                )}
-              </Collapsible>
-            ) : (
-              <SidebarMenuButton
-                isActive={isRouteActive}
-                className={cn(
-                  "h-8 rounded-md px-2 transition-colors",
-                  isRouteActive
-                    ? "bg-sidebar-accent text-foreground"
-                    : "text-muted-foreground hover:bg-sidebar-accent hover:text-foreground",
-                  isCollapsed && "justify-center",
-                )}
-                render={
-                  <Link href={route.link as never} prefetch={true} className="flex items-center" />
-                }
-              >
-                {route.icon}
-                {!isCollapsed && <span className="ml-2 text-xs font-medium">{route.title}</span>}
-              </SidebarMenuButton>
-            )}
-          </SidebarMenuItem>
-        );
-      })}
-    </SidebarMenu>
+export default function DashboardNavigation({ groups }: { groups: RouteGroup[] }) {
+  return (
+    <>
+      {groups.map((group) => (
+        <SidebarGroup key={group.label} className="py-1">
+          <SidebarGroupLabel className="mb-0.5 text-[11px] font-medium uppercase tracking-wider text-sidebar-foreground/40">
+            {group.label}
+          </SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {group.routes.map((route) => (
+                <NavItem key={route.id} route={route} />
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      ))}
+    </>
   );
 }

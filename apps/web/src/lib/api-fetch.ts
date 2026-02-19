@@ -60,7 +60,9 @@ export async function apiFetchJson<T>(input: RequestInfo | URL, options: ApiFetc
       if (!response.ok) {
         const message =
           typeof body === "object" && body && "error" in body
-            ? String((body as { error?: unknown }).error ?? `Request failed with ${response.status}`)
+            ? String(
+                (body as { error?: unknown }).error ?? `Request failed with ${response.status}`,
+              )
             : `Request failed with ${response.status}`;
         throw new ApiError(message, response.status, body);
       }

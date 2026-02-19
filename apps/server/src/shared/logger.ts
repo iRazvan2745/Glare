@@ -1,3 +1,21 @@
+import pino from "pino";
+import { env } from "@glare/env/server";
+
+const isDev = env.NODE_ENV === "development";
+
+const logger = pino(
+  {
+    base: { scope: "server" },
+    level: "info",
+  },
+  isDev
+    ? pino.transport({
+        target: "pino-pretty",
+        options: { colorize: true },
+      })
+    : undefined,
+);
+
 const requestStartTimes = new WeakMap<Request, number>();
 const requestIds = new WeakMap<Request, string>();
 
@@ -9,40 +27,16 @@ function nextRequestId() {
   return `req_${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function normalizeMeta(meta?: Record<string, unknown>) {
-  if (!meta) return {};
-  return meta;
-}
-
-function structuredLog(level: "info" | "warn" | "error", message: string, meta?: Record<string, unknown>) {
-  const payload = {
-    scope: "server",
-    level,
-    message,
-    ...normalizeMeta(meta),
-  };
-  const line = JSON.stringify(payload);
-  if (level === "warn") {
-    console.warn(line);
-    return;
-  }
-  if (level === "error") {
-    console.error(line);
-    return;
-  }
-  console.log(line);
-}
-
 export function logInfo(message: string, meta?: Record<string, unknown>) {
-  structuredLog("info", message, meta);
+  logger.info(meta ?? {}, message);
 }
 
 export function logWarn(message: string, meta?: Record<string, unknown>) {
-  structuredLog("warn", message, meta);
+  logger.warn(meta ?? {}, message);
 }
 
 export function logError(message: string, meta?: Record<string, unknown>) {
-  structuredLog("error", message, meta);
+  logger.error(meta ?? {}, message);
 }
 
 export function markRequestStart(request: Request) {

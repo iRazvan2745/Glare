@@ -1,9 +1,6 @@
-@import 'tailwindcss';
-@import 'fumadocs-ui/css/shadcn.css';
-@import 'fumadocs-ui/css/preset.css';
-
-
-
+@import "tailwindcss";
+@import "fumadocs-ui/css/shadcn.css";
+@import "fumadocs-ui/css/preset.css";
 
 :root {
   --background: var(--color-white);
@@ -184,12 +181,11 @@
   --color-info-foreground: var(--info-foreground);
   --color-info: var(--info);
   @keyframes skeleton {
-  to {
-    background-position: -200% 0;
+    to {
+      background-position: -200% 0;
     }
   }
 }
-
 
 #nd-sidebar {
   border-color: var(--color-background);

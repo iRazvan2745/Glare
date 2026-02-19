@@ -1,11 +1,16 @@
 export * from "./auth";
+export * from "./audit-logs";
 export * from "./backup-events";
 export * from "./backup-plan-runs";
 export * from "./backup-plans";
 export * from "./backup-plan-workers";
+export * from "./backup-run-metrics";
+export * from "./backup-size-anomalies";
+export * from "./labels";
 export * from "./repository-backup-workers";
 export * from "./repositories";
 export * from "./settings";
+export * from "./storage-usage-events";
 export * from "./workers";
 export * from "./worker-sync-events";
 export {};

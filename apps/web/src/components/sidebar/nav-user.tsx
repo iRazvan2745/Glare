@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { RiArrowUpSLine, RiLogoutBoxRLine, RiSettings3Line, RiUser3Line } from "@remixicon/react";
+import { RiLogoutBoxRLine, RiSettings3Line, RiUser3Line } from "@remixicon/react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -44,7 +44,7 @@ export function NavUser() {
         <SidebarMenuItem>
           <SidebarMenuButton
             render={<Link href="/login" />}
-            className="h-10 rounded-xl border bg-sidebar-accent/20 text-sidebar-foreground"
+            className="h-10 rounded-lg text-sidebar-foreground"
             tooltip="Sign in"
           >
             <RiUser3Line className="size-4" />
@@ -66,20 +66,18 @@ export function NavUser() {
             render={
               <SidebarMenuButton
                 size="lg"
-                className="h-10 rounded-xl border bg-sidebar-accent/20 px-2.5 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/40 data-[state=open]:bg-sidebar-accent/50"
+                className="h-12 rounded-lg px-2 text-sidebar-foreground transition-colors hover:bg-sidebar-accent/50 data-[state=open]:bg-sidebar-accent/50"
                 tooltip={user.name}
               >
-                <Avatar className="size-7 rounded-full">
+                <Avatar className="size-8 shrink-0 rounded-full">
                   <AvatarImage src={user.image ?? ""} alt={user.name} />
-                  <AvatarFallback className="rounded-full text-[10px]">{fallback}</AvatarFallback>
+                  <AvatarFallback className="rounded-full text-xs">{fallback}</AvatarFallback>
                 </Avatar>
-                <div className="grid flex-1 text-left leading-tight">
-                  <span className="truncate text-xs font-medium">{user.name}</span>
-                  <span className="truncate text-[11px] text-sidebar-foreground/70">
-                    {user.email}
-                  </span>
+                <div className="grid min-w-0 flex-1 text-left leading-tight">
+                  <span className="truncate text-sm font-medium">{user.name}</span>
+                  <span className="truncate text-xs text-sidebar-foreground/50">{user.email}</span>
                 </div>
-                <RiArrowUpSLine className="ml-auto size-3.5 opacity-60" />
+                <RiSettings3Line className="ml-auto size-4 shrink-0 text-sidebar-foreground/40" />
               </SidebarMenuButton>
             }
           ></DropdownMenuTrigger>

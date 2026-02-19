@@ -1,14 +1,33 @@
 "use client";
 
-import { RiAlarmWarningLine, RiErrorWarningLine, RiPulseLine } from "@remixicon/react";
+import {
+  RiAlarmWarningLine,
+  RiArrowLeftRightLine,
+  RiErrorWarningLine,
+  RiPercentLine,
+  RiPulseLine,
+  RiServerLine,
+} from "@remixicon/react";
 import { useQuery } from "@tanstack/react-query";
 import { env } from "@glare/env/web";
-import { Area, AreaChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from "recharts";
 import { parseAsInteger, parseAsString, useQueryState } from "nuqs";
 import { useCallback, useMemo } from "react";
 
 import { ActivityFeed, KpiStat, SectionHeader, StatusBadge } from "@/components/control-plane";
-import { DataTableFilter, useDataTableFilters, type FiltersState } from "@/components/data-table-filter";
+import {
+  DataTableFilter,
+  useDataTableFilters,
+  type FiltersState,
+} from "@/components/data-table-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { apiFetchJson } from "@/lib/api-fetch";
@@ -51,6 +70,14 @@ type EventsResponse = {
   };
 };
 
+type AuditLogRecord = {
+  id: string;
+  action: string;
+  resourceType: string;
+  resourceId: string | null;
+  createdAt: string;
+};
+
 function formatNumber(value: number) {
   return value.toLocaleString();
 }
@@ -64,6 +91,13 @@ function severityToBadge(severity: string) {
   if (severity === "warning") return "degraded" as const;
   return "healthy" as const;
 }
+
+const RANGE_TO_HOURS: Record<string, number> = {
+  "1h": 1,
+  "6h": 6,
+  "24h": 24,
+  "7d": 24 * 7,
+};
 
 export default function ObservabilityPage() {
   const { data: session } = authClient.useSession();
@@ -91,9 +125,12 @@ export default function ObservabilityPage() {
     queryKey: ["observability-overview", session?.user?.id ?? "anonymous", range],
     enabled: Boolean(session?.user),
     queryFn: () =>
-      apiFetchJson<OverviewResponse>(`${env.NEXT_PUBLIC_SERVER_URL}/api/observability/overview?range=${range}`, {
-        method: "GET",
-      }),
+      apiFetchJson<OverviewResponse>(
+        `${env.NEXT_PUBLIC_SERVER_URL}/api/observability/overview?range=${range}`,
+        {
+          method: "GET",
+        },
+      ),
   });
 
   const eventsQuery = useQuery({
@@ -103,6 +140,18 @@ export default function ObservabilityPage() {
       apiFetchJson<EventsResponse>(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/observability/events?severity=${severity}&status=${status}&limit=${pageSize}&offset=${offset}`,
         { method: "GET" },
+      ),
+  });
+
+  const auditQuery = useQuery({
+    queryKey: ["audit-logs", session?.user?.id ?? "anonymous"],
+    enabled: Boolean(session?.user),
+    queryFn: () =>
+      apiFetchJson<{ logs: AuditLogRecord[] }>(
+        `${env.NEXT_PUBLIC_SERVER_URL}/api/audit/logs?limit=20`,
+        {
+          method: "GET",
+        },
       ),
   });
 
@@ -160,7 +209,8 @@ export default function ObservabilityPage() {
 
   const onObservabilityFiltersChange = useCallback(
     (nextFilters: FiltersState | ((prev: FiltersState) => FiltersState)) => {
-      const resolved = typeof nextFilters === "function" ? nextFilters(observabilityFilters) : nextFilters;
+      const resolved =
+        typeof nextFilters === "function" ? nextFilters(observabilityFilters) : nextFilters;
       const nextSeverity = String(
         resolved.find((entry) => entry.columnId === "severity")?.values?.[0] ?? "all",
       );
@@ -194,6 +244,18 @@ export default function ObservabilityPage() {
         subtitle="Unified telemetry, incidents, and operational activity for the control plane."
         actions={
           <div className="inline-flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() =>
+                window.open(
+                  `${env.NEXT_PUBLIC_SERVER_URL}/api/compliance/report.csv?hours=${RANGE_TO_HOURS[range] ?? 24}`,
+                  "_blank",
+                )
+              }
+            >
+              Export CSV
+            </Button>
             {["1h", "6h", "24h", "7d"].map((nextRange) => (
               <Button
                 key={nextRange}
@@ -209,10 +271,34 @@ export default function ObservabilityPage() {
       />
 
       <div className="grid gap-4 md:grid-cols-4">
-        <KpiStat label="Workers Online" value={`${summary?.onlineWorkers ?? 0}/${summary?.totalWorkers ?? 0}`} helper="Current fleet" />
-        <KpiStat label="Requests (range)" value={formatNumber(summary?.requests24h ?? 0)} helper="Aggregated worker sync telemetry" />
-        <KpiStat label="Errors (range)" value={formatNumber(summary?.errors24h ?? 0)} helper="All error signals" />
-        <KpiStat label="Error Rate" value={`${summary?.errorRatePercent ?? 0}%`} helper="Derived from request/error totals" />
+        <KpiStat
+          label="Workers Online"
+          value={`${summary?.onlineWorkers ?? 0}/${summary?.totalWorkers ?? 0}`}
+          helper="Current fleet"
+          icon={RiServerLine}
+          color="green"
+        />
+        <KpiStat
+          label="Requests (range)"
+          value={formatNumber(summary?.requests24h ?? 0)}
+          helper="Aggregated worker sync telemetry"
+          icon={RiArrowLeftRightLine}
+          color="blue"
+        />
+        <KpiStat
+          label="Errors (range)"
+          value={formatNumber(summary?.errors24h ?? 0)}
+          helper="All error signals"
+          icon={RiErrorWarningLine}
+          color="red"
+        />
+        <KpiStat
+          label="Error Rate"
+          value={`${summary?.errorRatePercent ?? 0}%`}
+          helper="Derived from request/error totals"
+          icon={RiPercentLine}
+          color="amber"
+        />
       </div>
 
       <Card>
@@ -237,14 +323,33 @@ export default function ObservabilityPage() {
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-              <XAxis dataKey="timestamp" tickFormatter={(value) => new Date(value).toLocaleTimeString()} minTickGap={28} />
+              <XAxis
+                dataKey="timestamp"
+                tickFormatter={(value) => new Date(value).toLocaleTimeString()}
+                minTickGap={28}
+              />
               <YAxis />
               <Tooltip
-                formatter={(value: number, name: string) => [formatNumber(value), name === "requests" ? "Requests" : "Errors"]}
+                formatter={(value: number, name: string) => [
+                  formatNumber(value),
+                  name === "requests" ? "Requests" : "Errors",
+                ]}
                 labelFormatter={(value) => new Date(value).toLocaleString()}
               />
-              <Area type="linear" dataKey="requests" stroke="#4f9cff" fill="url(#obsRequests)" strokeWidth={2} />
-              <Area type="linear" dataKey="errors" stroke="#f87171" fill="url(#obsErrors)" strokeWidth={2} />
+              <Area
+                type="linear"
+                dataKey="requests"
+                stroke="#4f9cff"
+                fill="url(#obsRequests)"
+                strokeWidth={2}
+              />
+              <Area
+                type="linear"
+                dataKey="errors"
+                stroke="#f87171"
+                fill="url(#obsErrors)"
+                strokeWidth={2}
+              />
             </AreaChart>
           </ResponsiveContainer>
         </CardContent>
@@ -257,22 +362,22 @@ export default function ObservabilityPage() {
               <RiAlarmWarningLine className="size-4" />
               Incidents (Last 7 Days)
             </CardTitle>
-            <CardDescription>Recent operational incidents emitted by backup workers and plans.</CardDescription>
+            <CardDescription>
+              Recent operational incidents emitted by backup workers and plans.
+            </CardDescription>
           </CardHeader>
           <CardContent>
             <ActivityFeed
-              events={(overviewQuery.data?.incidents ?? []).slice(0, 10).map((incident) => ({
-                id: incident.id,
-                title: incident.type.replace(/_/g, " "),
-                detail: incident.message,
-                at: incident.createdAt,
-                status:
-                  incident.severity === "error"
-                    ? "outage"
-                    : incident.severity === "warning"
-                      ? "degraded"
-                      : "healthy",
-              }))}
+              events={(overviewQuery.data?.incidents ?? [])
+                .filter((incident) => incident.severity === "error")
+                .slice(0, 10)
+                .map((incident) => ({
+                  id: incident.id,
+                  title: incident.type.replace(/_/g, " "),
+                  detail: incident.message,
+                  at: incident.createdAt,
+                  status: "outage" as const,
+                }))}
             />
           </CardContent>
         </Card>
@@ -301,14 +406,17 @@ export default function ObservabilityPage() {
                     <StatusBadge status={severityToBadge(event.severity)} />
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">{event.message}</p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">{formatTime(event.createdAt)}</p>
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {formatTime(event.createdAt)}
+                  </p>
                 </div>
               ))}
             </div>
 
             <div className="flex items-center justify-between pt-1 text-xs text-muted-foreground">
               <span>
-                Showing {eventsQuery.data?.events.length ?? 0} of {eventsQuery.data?.pagination.total ?? 0}
+                Showing {eventsQuery.data?.events.length ?? 0} of{" "}
+                {eventsQuery.data?.pagination.total ?? 0}
               </span>
               <div className="inline-flex gap-2">
                 <Button
@@ -332,6 +440,31 @@ export default function ObservabilityPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Audit Log</CardTitle>
+          <CardDescription>
+            Recent user actions across plans, restores, and policy changes.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          {(auditQuery.data?.logs ?? []).length === 0 ? (
+            <p className="text-xs text-muted-foreground">No audit records available.</p>
+          ) : (
+            (auditQuery.data?.logs ?? []).map((log) => (
+              <div key={log.id} className="rounded-md border border-border/60 p-2">
+                <p className="text-xs font-medium">{log.action}</p>
+                <p className="text-[11px] text-muted-foreground">
+                  {log.resourceType}
+                  {log.resourceId ? ` • ${log.resourceId}` : ""}
+                </p>
+                <p className="text-[11px] text-muted-foreground">{formatTime(log.createdAt)}</p>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

@@ -1,6 +1,15 @@
 "use client";
 
-import { RiArrowLeftLine, RiEyeLine, RiEyeOffLine, RiHistoryLine, RiPlayCircleLine } from "@remixicon/react";
+import {
+  RiAlarmWarningLine,
+  RiArrowLeftLine,
+  RiCameraLine,
+  RiEyeLine,
+  RiEyeOffLine,
+  RiHardDriveLine,
+  RiHistoryLine,
+  RiPlayCircleLine,
+} from "@remixicon/react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -53,7 +62,12 @@ function maskValue(value: string) {
 
 function isSensitiveKey(key: string) {
   const normalized = key.toLowerCase();
-  return normalized.includes("secret") || normalized.includes("password") || normalized.includes("token") || normalized.includes("key");
+  return (
+    normalized.includes("secret") ||
+    normalized.includes("password") ||
+    normalized.includes("token") ||
+    normalized.includes("key")
+  );
 }
 
 export default function RepositoryInfoPage() {
@@ -124,7 +138,9 @@ export default function RepositoryInfoPage() {
             {
               id: "init",
               title: repository.isInitialized ? "Initialized" : "Initialization pending",
-              detail: repository.isInitialized ? `Initialized ${formatDateTime(repository.initializedAt)}` : "Run initialization on assigned worker",
+              detail: repository.isInitialized
+                ? `Initialized ${formatDateTime(repository.initializedAt)}`
+                : "Run initialization on assigned worker",
               status: repository.isInitialized ? ("healthy" as const) : ("degraded" as const),
               at: repository.initializedAt ?? repository.updatedAt,
             },
@@ -145,10 +161,13 @@ export default function RepositoryInfoPage() {
 
     setIsInitLoading(true);
     try {
-      await apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repository.id}/init`, {
-        method: "POST",
-        retries: 1,
-      });
+      await apiFetchJson(
+        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repository.id}/init`,
+        {
+          method: "POST",
+          retries: 1,
+        },
+      );
 
       setRepository((current) =>
         current
@@ -161,7 +180,9 @@ export default function RepositoryInfoPage() {
       );
       toast.success("Repository initialized.");
     } catch (nextError) {
-      toast.error(nextError instanceof Error ? nextError.message : "Could not initialize repository.");
+      toast.error(
+        nextError instanceof Error ? nextError.message : "Could not initialize repository.",
+      );
     } finally {
       setIsInitLoading(false);
     }
@@ -217,7 +238,12 @@ export default function RepositoryInfoPage() {
               <RiArrowLeftLine className="size-4" />
               Repositories
             </Button>
-            <Button variant="outline" size="sm" onClick={() => void handleInit()} disabled={repository.isInitialized || isInitLoading}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void handleInit()}
+              disabled={repository.isInitialized || isInitLoading}
+            >
               <RiPlayCircleLine className="size-4" />
               {repository.isInitialized ? "Initialized" : "Initialize"}
             </Button>
@@ -230,9 +256,26 @@ export default function RepositoryInfoPage() {
       />
 
       <div className="grid gap-3 md:grid-cols-3">
-        <KpiStat label="Last snapshot" value="—" helper="Recovery point telemetry pending" />
-        <KpiStat label="Last failure" value="—" helper="No failures recorded" />
-        <KpiStat label="Storage health" value={repository.isInitialized ? "Reachable" : "Pending init"} />
+        <KpiStat
+          label="Last snapshot"
+          value="—"
+          helper="Recovery point telemetry pending"
+          icon={RiCameraLine}
+          color="blue"
+        />
+        <KpiStat
+          label="Last failure"
+          value="—"
+          helper="No failures recorded"
+          icon={RiAlarmWarningLine}
+          color="red"
+        />
+        <KpiStat
+          label="Storage health"
+          value={repository.isInitialized ? "Reachable" : "Pending init"}
+          icon={RiHardDriveLine}
+          color="green"
+        />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-5">
@@ -257,17 +300,31 @@ export default function RepositoryInfoPage() {
               <CardDescription>Sensitive values are masked by default.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-2 text-xs">
-              <Button variant="outline" size="sm" className="h-7" onClick={() => setShowSecrets((value) => !value)}>
-                {showSecrets ? <RiEyeOffLine className="size-4" /> : <RiEyeLine className="size-4" />}
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7"
+                onClick={() => setShowSecrets((value) => !value)}
+              >
+                {showSecrets ? (
+                  <RiEyeOffLine className="size-4" />
+                ) : (
+                  <RiEyeLine className="size-4" />
+                )}
                 {showSecrets ? "Hide" : "Reveal"}
               </Button>
               {optionEntries.length === 0 ? (
                 <p className="text-muted-foreground">No credentials/options configured.</p>
               ) : (
                 optionEntries.map(([key, value]) => (
-                  <div key={key} className="grid grid-cols-[minmax(0,180px)_1fr] gap-2 rounded border p-2">
+                  <div
+                    key={key}
+                    className="grid grid-cols-[minmax(0,180px)_1fr] gap-2 rounded border p-2"
+                  >
                     <span className="truncate font-mono text-muted-foreground">{key}</span>
-                    <span className="truncate font-mono">{isSensitiveKey(key) && !showSecrets ? maskValue(value) : value}</span>
+                    <span className="truncate font-mono">
+                      {isSensitiveKey(key) && !showSecrets ? maskValue(value) : value}
+                    </span>
                   </div>
                 ))
               )}
@@ -283,7 +340,10 @@ export default function RepositoryInfoPage() {
               {repository.worker ? (
                 <>
                   <p className="font-medium">{repository.worker.name}</p>
-                  <StatusBadge status={repository.worker.isOnline ? "healthy" : "outage"} label={repository.worker.isOnline ? "Online" : "Offline"} />
+                  <StatusBadge
+                    status={repository.worker.isOnline ? "healthy" : "outage"}
+                    label={repository.worker.isOnline ? "Online" : "Offline"}
+                  />
                 </>
               ) : (
                 <p className="text-muted-foreground">No worker assigned.</p>
@@ -309,9 +369,15 @@ export default function RepositoryInfoPage() {
               <CardDescription>Repository lifecycle timestamps.</CardDescription>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
-              <div className="rounded border p-2">Created: {formatDateTime(repository.createdAt)}</div>
-              <div className="rounded border p-2">Updated: {formatDateTime(repository.updatedAt)}</div>
-              <div className="rounded border p-2">Initialized: {formatDateTime(repository.initializedAt)}</div>
+              <div className="rounded border p-2">
+                Created: {formatDateTime(repository.createdAt)}
+              </div>
+              <div className="rounded border p-2">
+                Updated: {formatDateTime(repository.updatedAt)}
+              </div>
+              <div className="rounded border p-2">
+                Initialized: {formatDateTime(repository.initializedAt)}
+              </div>
             </CardContent>
           </Card>
 

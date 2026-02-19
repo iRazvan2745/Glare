@@ -17,12 +17,7 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "@/components/ui/menu";
-import type {
-  ColumnConfig,
-  DataTableFilterActions,
-  FilterStrategy,
-  FiltersState,
-} from "./types";
+import type { ColumnConfig, DataTableFilterActions, FilterStrategy, FiltersState } from "./types";
 
 interface DataTableFilterProps<TData = any> {
   columns: readonly ColumnConfig<TData>[];
@@ -31,17 +26,11 @@ interface DataTableFilterProps<TData = any> {
   strategy: FilterStrategy;
 }
 
-export function DataTableFilter<TData>({
-  columns,
-  filters,
-  actions,
-}: DataTableFilterProps<TData>) {
+export function DataTableFilter<TData>({ columns, filters, actions }: DataTableFilterProps<TData>) {
   return (
     <div className="flex flex-wrap items-center gap-1.5">
       <Menu>
-        <MenuTrigger
-          render={<Button variant="outline" size="sm" className="gap-1.5" />}
-        >
+        <MenuTrigger render={<Button variant="outline" size="sm" className="gap-1.5" />}>
           <RiFilterLine className="size-3.5" />
           Filter
         </MenuTrigger>
@@ -62,11 +51,7 @@ export function DataTableFilter<TData>({
                     actions={actions}
                   />
                 ) : (
-                  <TextFilterInput
-                    columnId={col.id}
-                    filters={filters}
-                    actions={actions}
-                  />
+                  <TextFilterInput columnId={col.id} filters={filters} actions={actions} />
                 )}
               </MenuSubPopup>
             </MenuSub>
@@ -130,12 +115,7 @@ function OptionFilterItems({
     if (next.length === 0) {
       actions.removeFilter(columnId);
     } else {
-      actions.setFilter(
-        columnId,
-        "option",
-        next.length > 1 ? "is any of" : "is",
-        next,
-      );
+      actions.setFilter(columnId, "option", next.length > 1 ? "is any of" : "is", next);
     }
   }
 
@@ -193,14 +173,9 @@ function TextFilterInput({
   );
 }
 
-function formatFilterLabel(
-  filter: FiltersState[number],
-  col: ColumnConfig,
-): string {
+function formatFilterLabel(filter: FiltersState[number], col: ColumnConfig): string {
   if (filter.type === "option") {
-    return filter.values
-      .map((v) => col.options?.find((o) => o.value === v)?.label ?? v)
-      .join(", ");
+    return filter.values.map((v) => col.options?.find((o) => o.value === v)?.label ?? v).join(", ");
   }
   return filter.values[0] ?? "";
 }

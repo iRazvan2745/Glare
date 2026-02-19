@@ -32,6 +32,7 @@
     "db:watch": "turbo run db:watch --filter=@glare/db",
     "db:stop": "turbo run db:stop --filter=@glare/db",
     "db:down": "turbo run db:down --filter=@glare/db",
+    "db:init": "bun db:generate && bun db:push",
     "check": "oxlint && oxfmt --write"
   },
   "dependencies": {
@@ -41,7 +42,7 @@
   "devDependencies": {
     "@glare/config": "workspace:*",
     "@types/bun": "catalog:",
-    "oxfmt": "^0.26.0",
+    "oxfmt": "^0.33.0",
     "oxlint": "^1.41.0",
     "turbo": "^2.6.3",
     "typescript": "catalog:"

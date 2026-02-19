@@ -3,6 +3,16 @@ import { boolean, pgTable, text, timestamp } from "drizzle-orm/pg-core";
 
 import { user } from "./auth";
 
+export const workspaceSettings = pgTable("workspace_settings", {
+  id: text("id").primaryKey().default("default"),
+  signupsEnabled: boolean("signups_enabled").default(true).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+});
+
 export const userSettings = pgTable("user_settings", {
   userId: text("user_id")
     .primaryKey()

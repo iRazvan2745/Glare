@@ -35,7 +35,13 @@ export function TimelineEventRow({ event }: { event: TimelineEvent }) {
   );
 }
 
-export function ActivityFeed({ title = "Recent Activity", events }: { title?: string; events: TimelineEvent[] }) {
+export function ActivityFeed({
+  title = "Recent Activity",
+  events,
+}: {
+  title?: string;
+  events: TimelineEvent[];
+}) {
   return (
     <Card>
       <CardHeader>

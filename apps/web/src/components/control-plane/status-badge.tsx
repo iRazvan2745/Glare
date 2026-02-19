@@ -11,7 +11,12 @@ const toneByStatus: Record<HealthStatus, string> = {
 };
 
 export function StatusBadge({ status, label }: { status: HealthStatus; label?: string }) {
-  const Icon = status === "healthy" ? RiCheckboxCircleLine : status === "degraded" ? RiErrorWarningLine : RiAlarmWarningLine;
+  const Icon =
+    status === "healthy"
+      ? RiCheckboxCircleLine
+      : status === "degraded"
+        ? RiErrorWarningLine
+        : RiAlarmWarningLine;
 
   return (
     <Badge variant="outline" className={`gap-1.5 ${toneByStatus[status]}`}>

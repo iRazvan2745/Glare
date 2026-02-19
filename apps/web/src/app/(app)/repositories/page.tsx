@@ -2,6 +2,8 @@
 
 import {
   RiArrowDownSLine,
+  RiCheckboxCircleLine,
+  RiCloseCircleLine,
   RiCloudLine,
   RiDatabase2Line,
   RiHardDrive2Line,
@@ -12,7 +14,13 @@ import {
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "@/lib/toast";
 
-import { ActionMenu, ControlPlaneEmptyState, KpiStat, SectionHeader, StatusBadge } from "@/components/control-plane";
+import {
+  ActionMenu,
+  ControlPlaneEmptyState,
+  KpiStat,
+  SectionHeader,
+  StatusBadge,
+} from "@/components/control-plane";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,8 +50,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { deriveHealthStatus } from "@/lib/control-plane/health";
+import { formatBytes } from "@/lib/format-bytes";
 import { authClient } from "@/lib/auth-client";
 import { env } from "@glare/env/web";
+import { useQueries, useQuery } from "@tanstack/react-query";
+import { Spinner } from "@/components/ui/spinner";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -642,7 +653,11 @@ function RepositoryForm({
           </Label>
           <Input
             id="repo-path"
-            placeholder={form.backend === "rclone" ? "bucket/path or rclone:<remote>:<path>" : "/mnt/backups/repo"}
+            placeholder={
+              form.backend === "rclone"
+                ? "bucket/path or rclone:<remote>:<path>"
+                : "/mnt/backups/repo"
+            }
             value={form.repositoryPath}
             onChange={(e) => update({ repositoryPath: e.target.value })}
             disabled={disabled}
@@ -652,7 +667,9 @@ function RepositoryForm({
 
       <Separator />
 
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Worker Linkage</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Worker Linkage
+      </p>
       {/* Worker assignment */}
       <div className="space-y-1.5">
         <Label className="text-xs">Primary worker (init/snapshots)</Label>
@@ -719,7 +736,9 @@ function RepositoryForm({
         )}
       </div>
 
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Credentials</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Credentials
+      </p>
       {/* Password */}
       <div className="space-y-1.5">
         <Label htmlFor="repo-password" className="text-xs">
@@ -735,7 +754,9 @@ function RepositoryForm({
         />
       </div>
 
-      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Advanced</p>
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+        Advanced
+      </p>
       {/* Extra options */}
       <Collapsible>
         <CollapsibleTrigger
@@ -778,6 +799,7 @@ function RepositoryListItem({
   onEdit,
   onDelete,
   isInitializing,
+  storageBytes,
 }: {
   repo: RepositoryRecord;
   onInit: () => void;
@@ -785,19 +807,20 @@ function RepositoryListItem({
   onEdit: () => void;
   onDelete: () => void;
   isInitializing: boolean;
+  storageBytes: number | null;
 }) {
-  const BackendIcon = BACKEND_OPTIONS.find((b) => b.value === repo.backend)?.icon ?? RiDatabase2Line;
+  const BackendIcon =
+    BACKEND_OPTIONS.find((b) => b.value === repo.backend)?.icon ?? RiDatabase2Line;
   const health = deriveHealthStatus({
     totalWorkers: Math.max(1, repo.backupWorkers.length),
     offlineWorkers: repo.primaryWorker && !repo.primaryWorker.isOnline ? 1 : 0,
     unlinkedRepositories: repo.primaryWorker ? 0 : 1,
     errorRate24h: repo.isInitialized ? 0 : 1,
   });
-
   return (
     <div className="group flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors hover:bg-muted/40">
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted">
-        <BackendIcon className="size-4 text-muted-foreground" />
+      <div className="flex size-12 shrink-0 items-center justify-center rounded-md bg-muted">
+        <BackendIcon className="size-6 text-muted-foreground" />
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -810,7 +833,10 @@ function RepositoryListItem({
           <Badge variant="outline" className="text-[10px] shrink-0">
             {repo.backend}
           </Badge>
-          <StatusBadge status={health} label={repo.isInitialized ? "Initialized" : "Uninitialized"} />
+          <StatusBadge
+            status={health}
+            label={repo.isInitialized ? "Initialized" : "Uninitialized"}
+          />
           {repo.hasPassword && (
             <Badge variant="secondary" className="text-[10px] shrink-0">
               encrypted
@@ -854,8 +880,14 @@ function RepositoryListItem({
                   <RiLoader4Line className="size-3.5 animate-spin" />
                   Initializing
                 </span>
+              ) : repo.isInitialized ? (
+                storageBytes != null ? (
+                  formatBytes(storageBytes)
+                ) : (
+                  <Spinner />
+                )
               ) : (
-                repo.isInitialized ? "Initialized" : "Init"
+                "Init"
               )}
             </TooltipTrigger>
             <TooltipContent>
@@ -868,7 +900,7 @@ function RepositoryListItem({
           </Tooltip>
           <ActionMenu
             items={[
-              { label: "Configure", onSelect: onEdit },
+              { label: "Edit", onSelect: onEdit },
               { label: "Initialize", onSelect: onInit },
               { label: "View Recovery Points", onSelect: onView },
               { label: "Delete", onSelect: onDelete, destructive: true },
@@ -918,6 +950,30 @@ export default function RepositoriesPage() {
     };
   }, [repositories]);
 
+  // Fetch storage sizes for initialized repos
+  const storageSizeQueries = useQueries({
+    queries: repositories
+      .filter((r) => r.isInitialized && r.options["s3.bucket"])
+      .map((r) => {
+        const remote = `glare-${r.id.split("-")[0]}:${r.options["s3.bucket"]}`;
+        return {
+          queryKey: ["repo-storage", r.id],
+          queryFn: () =>
+            apiFetchJson<{ rclone?: { parsedJson?: { bytes?: number } | null } }>(
+              `/api/rustic/repository-size?remote=${encodeURIComponent(remote)}`,
+            ).then((data) => data?.rclone?.parsedJson?.bytes ?? null),
+          staleTime: 5 * 60 * 1000,
+        };
+      }),
+  });
+
+  const storageBytesById = useMemo(() => {
+    const initialized = repositories.filter((r) => r.isInitialized && r.options["s3.bucket"]);
+    return Object.fromEntries(
+      initialized.map((r, i) => [r.id, storageSizeQueries[i]?.data ?? null]),
+    );
+  }, [repositories, storageSizeQueries]);
+
   // Data loading
   const loadData = useCallback(async () => {
     if (!session?.user) {
@@ -966,10 +1022,10 @@ export default function RepositoriesPage() {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
         {
-        method: "POST",
-        body: JSON.stringify(buildRequestBody(createForm)),
-        retries: 1,
-      },
+          method: "POST",
+          body: JSON.stringify(buildRequestBody(createForm)),
+          retries: 1,
+        },
       );
       if (data.repository) {
         setRepositories((prev) => [data.repository!, ...prev]);
@@ -1032,10 +1088,10 @@ export default function RepositoriesPage() {
     if (!deletingId) return;
     setIsSaving(true);
     try {
-      await apiFetchJson(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${deletingId}`,
-        { method: "DELETE", retries: 1 },
-      );
+      await apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${deletingId}`, {
+        method: "DELETE",
+        retries: 1,
+      });
       setRepositories((prev) => prev.filter((r) => r.id !== deletingId));
       setDeletingId("");
       toast.success("Repository deleted.");
@@ -1058,13 +1114,10 @@ export default function RepositoriesPage() {
 
     setInitializingId(repo.id);
     try {
-      await apiFetchJson(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repo.id}/init`,
-        {
-          method: "POST",
-          retries: 1,
-        },
-      );
+      await apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repo.id}/init`, {
+        method: "POST",
+        retries: 1,
+      });
 
       setRepositories((prev) =>
         prev.map((current) =>
@@ -1130,10 +1183,25 @@ export default function RepositoriesPage() {
 
       {/* Summary */}
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiStat label="Total" value={summary.total} />
-        <KpiStat label="Initialized" value={repositories.filter((repo) => repo.isInitialized).length} />
-        <KpiStat label="Uninitialized" value={repositories.filter((repo) => !repo.isInitialized).length} />
-        <KpiStat label="Backends" value={Object.keys(summary.byBackend).length} />
+        <KpiStat label="Total" value={summary.total} icon={RiServerLine} color="blue" />
+        <KpiStat
+          label="Initialized"
+          value={repositories.filter((repo) => repo.isInitialized).length}
+          icon={RiCheckboxCircleLine}
+          color="green"
+        />
+        <KpiStat
+          label="Uninitialized"
+          value={repositories.filter((repo) => !repo.isInitialized).length}
+          icon={RiCloseCircleLine}
+          color="amber"
+        />
+        <KpiStat
+          label="Backends"
+          value={Object.keys(summary.byBackend).length}
+          icon={RiDatabase2Line}
+          color="violet"
+        />
       </div>
 
       {/* Repository list */}
@@ -1165,6 +1233,7 @@ export default function RepositoriesPage() {
                 onEdit={() => beginEdit(repo)}
                 onDelete={() => setDeletingId(repo.id)}
                 isInitializing={initializingId === repo.id}
+                storageBytes={storageBytesById[repo.id] ?? null}
               />
             ))}
         </CardContent>

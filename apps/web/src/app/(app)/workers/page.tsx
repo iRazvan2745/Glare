@@ -15,7 +15,12 @@ import { parseAsBoolean, parseAsString, useQueryState } from "nuqs";
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "@/lib/toast";
 
-import { ActionMenu, ControlPlaneEmptyState, SectionHeader, StatusBadge } from "@/components/control-plane";
+import {
+  ActionMenu,
+  ControlPlaneEmptyState,
+  SectionHeader,
+  StatusBadge,
+} from "@/components/control-plane";
 import { DataTableFilter, useDataTableFilters } from "@/components/data-table-filter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,7 +42,13 @@ import { deriveHealthStatus } from "@/lib/control-plane/health";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
 import { env } from "@glare/env/web";
-import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "@/components/ui/select";
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectPopup,
+  SelectItem,
+} from "@/components/ui/select";
 
 type WorkerRecord = {
   id: string;
@@ -403,7 +414,12 @@ function WorkersPageContent() {
     [],
   );
 
-  const { actions: workerFilterActions, columns: workerFilterColumns, filters: workerFilters, strategy: workerFilterStrategy } = useDataTableFilters({
+  const {
+    actions: workerFilterActions,
+    columns: workerFilterColumns,
+    filters: workerFilters,
+    strategy: workerFilterStrategy,
+  } = useDataTableFilters({
     strategy: "client",
     data: workers,
     columnsConfig: workerFilterColumnsConfig,
@@ -419,7 +435,11 @@ function WorkersPageContent() {
 
     if (statusFilter.length > 0) {
       result = result.filter((w) => {
-        const derivedStatus = w.isOnline ? "online" : w.status === "degraded" ? "degraded" : "offline";
+        const derivedStatus = w.isOnline
+          ? "online"
+          : w.status === "degraded"
+            ? "degraded"
+            : "offline";
         return statusFilter.includes(derivedStatus);
       });
     }
@@ -496,10 +516,10 @@ function WorkersPageContent() {
       const data = await apiFetchJson<{ worker?: WorkerRecord; syncToken?: string }>(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
         {
-        method: "POST",
-        body: JSON.stringify({ name: normalizedName }),
-        retries: 1,
-      },
+          method: "POST",
+          body: JSON.stringify({ name: normalizedName }),
+          retries: 1,
+        },
       );
       if (data.worker) {
         setWorkers((previous) => [data.worker as WorkerRecord, ...previous]);
@@ -534,10 +554,10 @@ function WorkersPageContent() {
       const data = await apiFetchJson<{ worker?: WorkerRecord }>(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${editingWorkerId}`,
         {
-        method: "PATCH",
-        body: JSON.stringify({ name: normalizedName }),
-        retries: 1,
-      },
+          method: "PATCH",
+          body: JSON.stringify({ name: normalizedName }),
+          retries: 1,
+        },
       );
       if (data.worker) {
         setWorkers((previous) =>
@@ -562,13 +582,10 @@ function WorkersPageContent() {
 
     setIsDeletingWorker(true);
     try {
-      await apiFetchJson(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${deletingWorkerId}`,
-        {
-          method: "DELETE",
-          retries: 1,
-        },
-      );
+      await apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${deletingWorkerId}`, {
+        method: "DELETE",
+        retries: 1,
+      });
 
       setWorkers((previous) => previous.filter((item) => item.id !== deletingWorkerId));
       setRepositories((previous) =>
@@ -675,34 +692,34 @@ function WorkersPageContent() {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
         {
-        method: "POST",
-        body: JSON.stringify({
-          name,
-          backend: quickRepositoryBackend,
-          repository: quickRepositoryBackend === "s3" ? undefined : repositoryPath,
-          workerId: activeWorker.id,
-          password: quickRepositoryPassword.trim() || undefined,
-          s3:
-            quickRepositoryBackend === "s3"
-              ? {
-                  endpoint: quickS3.endpoint.trim() || undefined,
-                  bucket: quickS3.bucket.trim(),
-                  prefix: quickS3.prefix.trim() || undefined,
-                  region: quickS3.region.trim() || undefined,
-                  accessKeyId: quickS3.accessKeyId.trim() || undefined,
-                  secretAccessKey: quickS3.secretAccessKey.trim() || undefined,
-                  sessionToken: quickS3.sessionToken.trim() || undefined,
-                  profile: quickS3.profile.trim() || undefined,
-                  storageClass: quickS3.storageClass.trim() || undefined,
-                  acl: quickS3.acl.trim() || undefined,
-                  pathStyle: quickS3.pathStyle,
-                  disableTls: quickS3.disableTls,
-                  noVerifySsl: quickS3.noVerifySsl,
-                }
-              : undefined,
-        }),
-        retries: 1,
-      },
+          method: "POST",
+          body: JSON.stringify({
+            name,
+            backend: quickRepositoryBackend,
+            repository: quickRepositoryBackend === "s3" ? undefined : repositoryPath,
+            workerId: activeWorker.id,
+            password: quickRepositoryPassword.trim() || undefined,
+            s3:
+              quickRepositoryBackend === "s3"
+                ? {
+                    endpoint: quickS3.endpoint.trim() || undefined,
+                    bucket: quickS3.bucket.trim(),
+                    prefix: quickS3.prefix.trim() || undefined,
+                    region: quickS3.region.trim() || undefined,
+                    accessKeyId: quickS3.accessKeyId.trim() || undefined,
+                    secretAccessKey: quickS3.secretAccessKey.trim() || undefined,
+                    sessionToken: quickS3.sessionToken.trim() || undefined,
+                    profile: quickS3.profile.trim() || undefined,
+                    storageClass: quickS3.storageClass.trim() || undefined,
+                    acl: quickS3.acl.trim() || undefined,
+                    pathStyle: quickS3.pathStyle,
+                    disableTls: quickS3.disableTls,
+                    noVerifySsl: quickS3.noVerifySsl,
+                  }
+                : undefined,
+          }),
+          retries: 1,
+        },
       );
       if (data.repository) {
         setRepositories((previous) => [data.repository!, ...previous]);
@@ -735,50 +752,54 @@ function WorkersPageContent() {
         subtitle={`${onlineCount} online • ${offlineCount} offline`}
         actions={
           <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => router.push("/repositories" as never)}>
-            Repositories
-          </Button>
-          <Dialog
-            open={isCreateDialogOpen}
-            onOpenChange={(nextValue) => void setIsCreateDialogOpen(nextValue)}
-          >
-            <DialogTrigger render={<Button size="sm" className="gap-2" />}>
-              <RiUserAddLine className="size-4" />
-              Create Worker
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Create Worker</DialogTitle>
-                <DialogDescription>
-                  Give this worker a name. Your draft is kept in query params.
-                </DialogDescription>
-              </DialogHeader>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => router.push("/repositories" as never)}
+            >
+              Repositories
+            </Button>
+            <Dialog
+              open={isCreateDialogOpen}
+              onOpenChange={(nextValue) => void setIsCreateDialogOpen(nextValue)}
+            >
+              <DialogTrigger render={<Button size="sm" className="gap-2" />}>
+                <RiUserAddLine className="size-4" />
+                Create Worker
+              </DialogTrigger>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle>Create Worker</DialogTitle>
+                  <DialogDescription>
+                    Give this worker a name. Your draft is kept in query params.
+                  </DialogDescription>
+                </DialogHeader>
 
-              <div className="space-y-2">
-                <label htmlFor="worker-name" className="text-sm font-medium">
-                  Name
-                </label>
-                <Input
-                  id="worker-name"
-                  autoFocus
-                  value={workerNameDraft}
-                  onChange={(event) => void setWorkerNameDraft(event.target.value)}
-                  placeholder="Nightly report runner"
-                  disabled={isCreatingWorker}
-                  maxLength={120}
-                />
-              </div>
+                <div className="space-y-2">
+                  <label htmlFor="worker-name" className="text-sm font-medium">
+                    Name
+                  </label>
+                  <Input
+                    id="worker-name"
+                    autoFocus
+                    value={workerNameDraft}
+                    onChange={(event) => void setWorkerNameDraft(event.target.value)}
+                    placeholder="Nightly report runner"
+                    disabled={isCreatingWorker}
+                    maxLength={120}
+                  />
+                </div>
 
-              <DialogFooter>
-                <DialogClose render={<Button variant="outline" disabled={isCreatingWorker} />}>
-                  Cancel
-                </DialogClose>
-                <Button onClick={() => void createWorker()} disabled={isCreatingWorker}>
-                  {isCreatingWorker ? "Creating..." : "Create Worker"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
+                <DialogFooter>
+                  <DialogClose render={<Button variant="outline" disabled={isCreatingWorker} />}>
+                    Cancel
+                  </DialogClose>
+                  <Button onClick={() => void createWorker()} disabled={isCreatingWorker}>
+                    {isCreatingWorker ? "Creating..." : "Create Worker"}
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </div>
         }
       />
@@ -955,7 +976,11 @@ function WorkersPageContent() {
                             </Button>
                             <ActionMenu
                               items={[
-                                { label: "View", onSelect: () => router.push(`/workers/${currentWorker.id}` as never) },
+                                {
+                                  label: "View",
+                                  onSelect: () =>
+                                    router.push(`/workers/${currentWorker.id}` as never),
+                                },
                                 {
                                   label: "Edit",
                                   onSelect: () => {
@@ -963,9 +988,18 @@ function WorkersPageContent() {
                                     void setEditingWorkerId(currentWorker.id);
                                   },
                                 },
-                                { label: "Logs", onSelect: () => toast.info("Logs view is not available yet.") },
-                                { label: "Restart", onSelect: () => toast.info("Restart action is stubbed.") },
-                                { label: "Drain", onSelect: () => toast.info("Drain action is stubbed.") },
+                                {
+                                  label: "Logs",
+                                  onSelect: () => toast.info("Logs view is not available yet."),
+                                },
+                                {
+                                  label: "Restart",
+                                  onSelect: () => toast.info("Restart action is stubbed."),
+                                },
+                                {
+                                  label: "Drain",
+                                  onSelect: () => toast.info("Drain action is stubbed."),
+                                },
                                 {
                                   label: "Delete",
                                   onSelect: () => {
@@ -1266,7 +1300,10 @@ function WorkersPageContent() {
                           autoComplete="off"
                           value={quickS3.accessKeyId}
                           onChange={(event) =>
-                            setQuickS3((current) => ({ ...current, accessKeyId: event.target.value }))
+                            setQuickS3((current) => ({
+                              ...current,
+                              accessKeyId: event.target.value,
+                            }))
                           }
                           disabled={isSavingRepoSetup}
                         />
@@ -1295,7 +1332,10 @@ function WorkersPageContent() {
                           autoComplete="off"
                           value={quickS3.sessionToken}
                           onChange={(event) =>
-                            setQuickS3((current) => ({ ...current, sessionToken: event.target.value }))
+                            setQuickS3((current) => ({
+                              ...current,
+                              sessionToken: event.target.value,
+                            }))
                           }
                           disabled={isSavingRepoSetup}
                         />
@@ -1324,7 +1364,10 @@ function WorkersPageContent() {
                           placeholder="STANDARD"
                           value={quickS3.storageClass}
                           onChange={(event) =>
-                            setQuickS3((current) => ({ ...current, storageClass: event.target.value }))
+                            setQuickS3((current) => ({
+                              ...current,
+                              storageClass: event.target.value,
+                            }))
                           }
                           disabled={isSavingRepoSetup}
                         />

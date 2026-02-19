@@ -1,22 +1,35 @@
 "use client";
 
-import { RiArrowLeftLine, RiFileList3Line, RiPauseCircleLine, RiRefreshLine } from "@remixicon/react";
+import {
+  RiArrowLeftLine,
+  RiArrowLeftRightLine,
+  RiErrorWarningLine,
+  RiFileList3Line,
+  RiPauseCircleLine,
+  RiPercentLine,
+  RiRefreshLine,
+} from "@remixicon/react";
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { parseAsInteger, parseAsStringEnum, useQueryState } from "nuqs";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { Line, LineChart, ResponsiveContainer, Tooltip as RechartsTooltip } from "recharts";
 import { toast } from "@/lib/toast";
 
-import { DataTableFilter, useDataTableFilters, type FiltersState } from "@/components/data-table-filter";
-import { KpiStat, ResourceHeader, StatusBadge } from "@/components/control-plane";
+import { useDataTableFilters, type FiltersState } from "@/components/data-table-filter";
+import { KpiStat, ResourceHeader } from "@/components/control-plane";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { deriveHealthStatus } from "@/lib/control-plane/health";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
 import { env } from "@glare/env/web";
+
+import { UptimeHeatmap } from "./_components/uptime-heatmap";
+import { SyncEventsTable } from "./_components/sync-events-table";
+
+// ─── Types ───────────────────────────────────────────────────────────────────
 
 type WorkerRecord = {
   id: string;
@@ -45,36 +58,22 @@ type EventStatusFilter = "all" | "online" | "degraded" | "offline";
 
 type SyncEventsResponse = {
   events?: SyncEventRecord[];
-  pagination?: {
-    total: number;
-    limit: number;
-    offset: number;
-    hasMore: boolean;
-  };
+  pagination?: { total: number; limit: number; offset: number; hasMore: boolean };
 };
 
-const RANGE_TO_HOURS: Record<TimeRange, number> = {
-  "1h": 1,
-  "6h": 6,
-  "24h": 96,
-  "7d": 24 * 7,
-};
+// ─── Constants ───────────────────────────────────────────────────────────────
 
-const RANGE_TO_BUCKETS: Record<TimeRange, number> = {
-  "1h": 18,
-  "6h": 48,
-  "24h": 24,
-  "7d": 168,
-};
-
+const RANGE_TO_HOURS: Record<TimeRange, number> = { "1h": 1, "6h": 6, "24h": 96, "7d": 24 * 7 };
+const RANGE_TO_BUCKETS: Record<TimeRange, number> = { "1h": 18, "6h": 48, "24h": 24, "7d": 168 };
 const RANGE_TO_EVENT_LIMIT: Record<TimeRange, number> = {
   "1h": 180,
   "6h": 240,
   "24h": 300,
   "7d": 500,
 };
-
 const EVENTS_PAGE_SIZE = 25;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatUptime(ms: number) {
   if (ms <= 0) return "—";
@@ -82,7 +81,6 @@ function formatUptime(ms: number) {
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
-
   if (days > 0) return `${days}d ${hours % 24}h`;
   if (hours > 0) return `${hours}h ${minutes % 60}m`;
   if (minutes > 0) return `${minutes}m`;
@@ -112,17 +110,16 @@ function timeAgo(dateString: string | null) {
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
+  return `${Math.floor(hours / 24)}d ago`;
 }
+
+// ─── Page ────────────────────────────────────────────────────────────────────
 
 export default function WorkerDetailPage() {
   const params = useParams<{ id: string }>();
   const workerId = params?.id ?? "";
   const { data: session } = authClient.useSession();
 
-  const [hoveredHeatmapEvent, setHoveredHeatmapEvent] = useState<SyncEventRecord | null>(null);
-  const [heatmapPointer, setHeatmapPointer] = useState<{ clientX: number; clientY: number } | null>(null);
   const [statusFilter, setStatusFilter] = useQueryState(
     "status",
     parseAsStringEnum(["all", "online", "degraded", "offline"]).withDefault("all").withOptions({
@@ -139,7 +136,9 @@ export default function WorkerDetailPage() {
       history: "replace",
     }),
   );
+
   const tableOffset = Math.max(0, (page - 1) * EVENTS_PAGE_SIZE);
+
   const { data, isLoading, error } = useQuery({
     queryKey: [
       "worker-detail",
@@ -158,17 +157,11 @@ export default function WorkerDetailPage() {
         }),
         apiFetchJson<SyncEventsResponse>(
           `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}/sync-events?hours=${RANGE_TO_HOURS[timeRange]}&limit=${RANGE_TO_EVENT_LIMIT[timeRange]}`,
-          {
-            method: "GET",
-            retries: 1,
-          },
+          { method: "GET", retries: 1 },
         ),
         apiFetchJson<SyncEventsResponse>(
           `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}/sync-events?hours=${RANGE_TO_HOURS[timeRange]}&status=${statusFilter}&limit=${EVENTS_PAGE_SIZE}&offset=${tableOffset}`,
-          {
-            method: "GET",
-            retries: 1,
-          },
+          { method: "GET", retries: 1 },
         ),
       ]);
 
@@ -215,14 +208,11 @@ export default function WorkerDetailPage() {
     const start = now - rangeMs;
     const bucketMs = Math.max(1, Math.floor(rangeMs / bucketCount));
 
-    const buckets = Array.from({ length: bucketCount }).map((_, index) => {
-      const bucketStart = start + index * bucketMs;
-      return {
-        fullTime: new Date(bucketStart + bucketMs).toISOString(),
-        requests: 0,
-        errors: 0,
-      };
-    });
+    const buckets = Array.from({ length: bucketCount }).map((_, index) => ({
+      fullTime: new Date(start + index * bucketMs + bucketMs).toISOString(),
+      requests: 0,
+      errors: 0,
+    }));
 
     for (let index = 0; index < sorted.length; index += 1) {
       const current = sorted[index]!;
@@ -248,24 +238,6 @@ export default function WorkerDetailPage() {
     return buckets;
   }, [chartEvents, timeRange]);
 
-
-  const uptimeHeatmap = useMemo(() => chartEvents.slice(-72), [chartEvents]);
-  const activeHeatmapEvent = hoveredHeatmapEvent ?? uptimeHeatmap[uptimeHeatmap.length - 1] ?? null;
-  const setHoveredHeatmapEventIfChanged = useCallback((event: SyncEventRecord | null) => {
-    setHoveredHeatmapEvent((previous) => {
-      if (!event) return null;
-      return previous?.id === event.id ? previous : event;
-    });
-  }, []);
-
-  const setHeatmapAnchorFromElement = useCallback((element: HTMLElement) => {
-    const rect = element.getBoundingClientRect();
-    setHeatmapPointer({
-      clientX: rect.left + rect.width / 2,
-      clientY: rect.top,
-    });
-  }, []);
-
   const pageCount = Math.max(1, Math.ceil(tableTotal / EVENTS_PAGE_SIZE));
 
   const eventFilterColumnsConfig = useMemo(
@@ -288,14 +260,7 @@ export default function WorkerDetailPage() {
 
   const eventFilters = useMemo<FiltersState>(() => {
     if (statusFilter === "all") return [];
-    return [
-      {
-        columnId: "status",
-        type: "option",
-        operator: "is",
-        values: [statusFilter],
-      },
-    ];
+    return [{ columnId: "status", type: "option", operator: "is", values: [statusFilter] }];
   }, [statusFilter]);
 
   const onEventFiltersChange = useCallback(
@@ -366,18 +331,33 @@ export default function WorkerDetailPage() {
       <ResourceHeader
         name={worker.name}
         status={health}
-        metadata={[`Last seen ${timeAgo(worker.lastSeenAt)}`, `Uptime ${formatUptime(worker.uptimeMs)}`]}
+        metadata={[
+          `Last seen ${timeAgo(worker.lastSeenAt)}`,
+          `Uptime ${formatUptime(worker.uptimeMs)}`,
+        ]}
         actions={
           <>
-            <Button variant="outline" size="sm" onClick={() => toast.info("Logs view is not available yet.")}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => toast.info("Logs view is not available yet.")}
+            >
               <RiFileList3Line className="size-4" />
               Logs
             </Button>
-            <Button variant="outline" size="sm" onClick={() => toast.info("Restart action is stubbed.")}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => toast.info("Restart action is stubbed.")}
+            >
               <RiRefreshLine className="size-4" />
               Restart
             </Button>
-            <Button variant="outline" size="sm" onClick={() => toast.info("Drain action is stubbed.")}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => toast.info("Drain action is stubbed.")}
+            >
               <RiPauseCircleLine className="size-4" />
               Drain
             </Button>
@@ -386,106 +366,35 @@ export default function WorkerDetailPage() {
       />
 
       <div className="grid gap-3 lg:grid-cols-4">
-        <KpiStat label="Requests (24h)" value={formatNumber(requestsTotal)} />
-        <KpiStat label="Errors (24h)" value={formatNumber(errorsTotal)} />
-        <KpiStat label="Error rate (24h)" value={`${rate}%`} helper={requestsTotal === 0 ? "No requests recorded" : undefined} />
-        <KpiStat label="Sync events" value={chartEvents.length} />
+        <KpiStat
+          label="Requests (24h)"
+          value={formatNumber(requestsTotal)}
+          icon={RiArrowLeftRightLine}
+          color="blue"
+        />
+        <KpiStat
+          label="Errors (24h)"
+          value={formatNumber(errorsTotal)}
+          icon={RiErrorWarningLine}
+          color="red"
+        />
+        <KpiStat
+          label="Error rate (24h)"
+          value={`${rate}%`}
+          helper={requestsTotal === 0 ? "No requests recorded" : undefined}
+          icon={RiPercentLine}
+          color="amber"
+        />
+        <KpiStat
+          label="Sync events"
+          value={chartEvents.length}
+          icon={RiRefreshLine}
+          color="violet"
+        />
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        <Card>
-          <CardHeader>
-            <CardTitle>Uptime Heatmap</CardTitle>
-            <CardDescription>Recent heartbeat status across last 72 sync events.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            {uptimeHeatmap.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No sync events recorded in the last 24 hours.</p>
-            ) : (
-              <div>
-                <div className="relative">
-                  <div className="pointer-events-none grid grid-cols-12 gap-1">
-                    {uptimeHeatmap.map((event) => {
-                      const tone =
-                        event.status === "online"
-                          ? "bg-emerald-500/80"
-                          : event.status === "degraded"
-                            ? "bg-amber-500/80"
-                            : "bg-rose-500/70";
-                      return (
-                        <span
-                          key={event.id}
-                          className={`inline-block h-6 w-full rounded-sm ${tone}`}
-                          aria-hidden
-                        />
-                      );
-                    })}
-                  </div>
-                  <div
-                    className="absolute inset-0 grid grid-cols-12"
-                    onMouseLeave={() => {
-                      setHoveredHeatmapEvent(null);
-                      setHeatmapPointer(null);
-                    }}
-                  >
-                    {uptimeHeatmap.map((event) => {
-                      return (
-                        <span
-                          key={event.id}
-                          className="inline-block h-full w-full cursor-pointer"
-                          aria-label={`${event.status} at ${formatDateTime(event.createdAt)}`}
-                          onMouseEnter={(hoverEvent) => {
-                            setHoveredHeatmapEventIfChanged(event);
-                            setHeatmapAnchorFromElement(hoverEvent.currentTarget);
-                          }}
-                          onFocus={(focusEvent) => {
-                            setHoveredHeatmapEventIfChanged(event);
-                            setHeatmapAnchorFromElement(focusEvent.currentTarget);
-                          }}
-                          tabIndex={0}
-                        />
-                      );
-                    })}
-                  </div>
-                  {activeHeatmapEvent && heatmapPointer ? (
-                    <div
-                      className="pointer-events-none fixed z-[100] max-w-[280px] rounded-md border bg-popover px-2 py-1.5 text-xs text-popover-foreground shadow-md"
-                      style={{
-                        left: `${heatmapPointer.clientX}px`,
-                        top: `${heatmapPointer.clientY - 10}px`,
-                        transform: "translate(-50%, -100%)",
-                      }}
-                    >
-                      <span className="font-medium">{formatDateTime(activeHeatmapEvent.createdAt)}</span>
-                      {" • "}
-                      {activeHeatmapEvent.status}
-                      {" • "}
-                      req: {formatNumber(activeHeatmapEvent.requestsTotal)}
-                      {" • "}
-                      err: {formatNumber(activeHeatmapEvent.errorTotal)}
-                      {" • "}
-                      up: {formatUptime(activeHeatmapEvent.uptimeMs)}
-                    </div>
-                  ) : null}
-                </div>
-                <div className="mt-3 flex items-center gap-4 text-xs text-muted-foreground">
-                  <span className="flex items-center gap-1.5">
-                    <span className="size-2 rounded-full bg-emerald-500/80" />
-                    Online
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="size-2 rounded-full bg-amber-500/80" />
-                    Degraded
-                  </span>
-                  <span className="flex items-center gap-1.5">
-                    <span className="size-2 rounded-full bg-rose-500/70" />
-                    Offline
-                  </span>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <UptimeHeatmap events={chartEvents} />
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between gap-3">
@@ -534,7 +443,7 @@ export default function WorkerDetailPage() {
                       }}
                     />
                     <Line
-                      type="linear"
+                      type="step"
                       dataKey="requests"
                       stroke="var(--color-chart-1)"
                       strokeWidth={2}
@@ -543,7 +452,7 @@ export default function WorkerDetailPage() {
                       isAnimationActive={false}
                     />
                     <Line
-                      type="linear"
+                      type="step"
                       dataKey="errors"
                       stroke="var(--color-chart-5)"
                       strokeWidth={2}
@@ -559,68 +468,17 @@ export default function WorkerDetailPage() {
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Recent Events</CardTitle>
-          <CardDescription>Status-filtered worker events with anomaly emphasis.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <DataTableFilter
-            columns={eventFilterColumns}
-            filters={activeEventFilters}
-            actions={eventFilterActions}
-            strategy={eventFilterStrategy}
-          />
-
-          {tableEvents.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No events for the selected filter.</p>
-          ) : (
-            <div className="overflow-x-auto rounded-md border">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="border-b bg-muted/30 text-left text-muted-foreground">
-                    <th className="px-3 py-2 font-medium">Timestamp</th>
-                    <th className="px-3 py-2 font-medium">Status</th>
-                    <th className="px-3 py-2 font-medium text-right">Uptime</th>
-                    <th className="px-3 py-2 font-medium text-right">Requests</th>
-                    <th className="px-3 py-2 font-medium text-right">Errors</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-border">
-                  {tableEvents.map((event) => (
-                    <tr key={event.id} className={event.status !== "online" ? "bg-amber-500/5" : undefined}>
-                      <td className="px-3 py-2 tabular-nums">{formatDateTime(event.createdAt)}</td>
-                      <td className="px-3 py-2">
-                        <StatusBadge
-                          status={event.status === "offline" ? "outage" : event.status === "degraded" ? "degraded" : "healthy"}
-                          label={event.status}
-                        />
-                      </td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatUptime(event.uptimeMs)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatNumber(event.requestsTotal)}</td>
-                      <td className="px-3 py-2 text-right tabular-nums">{formatNumber(event.errorTotal)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between text-xs">
-            <p className="text-muted-foreground">
-              Page {page} of {pageCount}
-            </p>
-            <div className="flex items-center gap-2">
-              <Button size="sm" variant="outline" className="h-7 text-xs" disabled={page <= 1} onClick={() => void setPage(page - 1)}>
-                Previous
-              </Button>
-              <Button size="sm" variant="outline" className="h-7 text-xs" disabled={page >= pageCount} onClick={() => void setPage(page + 1)}>
-                Next
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
+      <SyncEventsTable
+        events={tableEvents}
+        page={page}
+        pageCount={pageCount}
+        tableTotal={tableTotal}
+        onPageChange={(p) => void setPage(p)}
+        filterColumns={eventFilterColumns}
+        filterFilters={activeEventFilters}
+        filterActions={eventFilterActions}
+        filterStrategy={eventFilterStrategy}
+      />
     </div>
   );
 }

@@ -16,7 +16,10 @@ export const rusticRepositoryBackupWorker = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("rustic_repository_backup_worker_unique_idx").on(table.repositoryId, table.workerId),
+    uniqueIndex("rustic_repository_backup_worker_unique_idx").on(
+      table.repositoryId,
+      table.workerId,
+    ),
     index("rustic_repository_backup_worker_workerId_idx").on(table.workerId),
   ],
 );

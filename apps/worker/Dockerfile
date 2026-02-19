@@ -9,7 +9,7 @@ COPY apps/worker/src ./apps/worker/src
 
 RUN cargo build --manifest-path apps/worker/Cargo.toml --release
 
-FROM docker.io/library/rust:1.85-alpine AS rustic-builder
+FROM docker.io/library/rust:1.93-alpine AS rustic-builder
 
 RUN apk add --no-cache build-base musl-dev
 RUN cargo install --locked --root /opt/rustic rustic-rs
@@ -27,7 +27,6 @@ RUN apk add --no-cache ca-certificates rclone \
 COPY --from=builder /app/apps/worker/target/release/worker /app/worker
 COPY --from=rustic-builder /opt/rustic/bin/rustic /usr/local/bin/rustic
 
-ENV LOCAL_API_ENDPOINT="http://0.0.0.0:3001"
 ENV RUSTIC_BIN="/usr/local/bin/rustic"
 ENV STATE_DIR="/var/lib/glare-worker"
 

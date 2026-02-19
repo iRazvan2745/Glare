@@ -12,104 +12,137 @@ import {
   RiUser3Line,
 } from "@remixicon/react";
 
-import DashboardNavigation, { type Route } from "@/components/sidebar/nav-main";
+import DashboardNavigation, { type RouteGroup } from "@/components/sidebar/nav-main";
 import { NavUser } from "@/components/sidebar/nav-user";
 import { Logo } from "@/components/sidebar/logo";
+import { GlobalCommandPalette } from "@/components/sidebar/global-command-palette";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
-  SidebarSeparator,
+  useSidebar,
 } from "@/components/ui/sidebar";
+import { authClient } from "@/lib/auth-client";
 
-export const workspaceRoutes: Route[] = [
+const baseRouteGroups: RouteGroup[] = [
   {
-    id: "home",
-    title: "Home",
-    icon: <RiHome5Line />,
-    link: "/",
+    label: "Overview",
+    routes: [
+      {
+        id: "home",
+        title: "Home",
+        icon: <RiHome5Line />,
+        link: "/",
+      },
+      {
+        id: "observability",
+        title: "Observability",
+        icon: <RiBarChartGroupedLine />,
+        link: "/observability",
+      },
+      {
+        id: "snapshots",
+        title: "Recovery Points",
+        icon: <RiDownloadCloud2Line />,
+        link: "/snapshots",
+      },
+    ],
   },
   {
-    id: "workers",
-    title: "Worker Fleet",
-    icon: <RiTeamLine />,
-    link: "/workers",
+    label: "Infrastructure",
+    routes: [
+      {
+        id: "workers",
+        title: "Worker Fleet",
+        icon: <RiTeamLine />,
+        link: "/workers",
+      },
+      {
+        id: "repositories",
+        title: "Repositories",
+        icon: <RiDatabase2Line />,
+        link: "/repositories",
+      },
+    ],
   },
   {
-    id: "repositories",
-    title: "Repositories",
-    icon: <RiDatabase2Line />,
-    link: "/repositories",
-  },
-  {
-    id: "plans",
-    title: "Schedules & Retention",
-    icon: <RiCalendarScheduleLine />,
-    link: "/plans",
-  },
-  {
-    id: "snapshots",
-    title: "Recovery Points",
-    icon: <RiDownloadCloud2Line />,
-    link: "/snapshots",
-  },
-  {
-    id: "observability",
-    title: "Observability",
-    icon: <RiBarChartGroupedLine />,
-    link: "/observability",
-  },
-  {
-    id: "users",
-    title: "Users",
-    icon: <RiUser3Line />,
-    link: "/users",
-  },
-  {
-    id: "settings",
-    title: "Settings",
-    icon: <RiSettings3Line />,
-    link: "/settings",
-  },
-  {
-    id: "admin",
-    title: "Admin",
-    icon: <RiShieldUserLine />,
-    link: "/admin",
+    label: "Management",
+    routes: [
+      {
+        id: "plans",
+        title: "Schedules & Retention",
+        icon: <RiCalendarScheduleLine />,
+        link: "/plans",
+      },
+      {
+        id: "users",
+        title: "Users",
+        icon: <RiUser3Line />,
+        link: "/users",
+      },
+      {
+        id: "settings",
+        title: "Settings",
+        icon: <RiSettings3Line />,
+        link: "/settings",
+      },
+    ],
   },
 ];
 
+const adminRouteGroup: RouteGroup = {
+  label: "Administration",
+  routes: [
+    {
+      id: "admin",
+      title: "Admin",
+      icon: <RiShieldUserLine />,
+      link: "/admin",
+    },
+  ],
+};
+
+const ADMIN_ROLES = new Set(["admin", "owner"]);
+
+// Flat export for command palette compatibility
+export const workspaceRoutes = [...baseRouteGroups, adminRouteGroup].flatMap((g) => g.routes);
+export const workspaceRouteGroups = [...baseRouteGroups, adminRouteGroup];
+
+function SidebarCommandPalette() {
+  const { state } = useSidebar();
+  if (state === "collapsed") return null;
+
+  return (
+    <div className="px-3 pt-1 pb-2">
+      <GlobalCommandPalette />
+    </div>
+  );
+}
+
 export function DashboardSidebar() {
+  const { data: session } = authClient.useSession();
+  const userRole = (session?.user?.role ?? "").trim().toLowerCase();
+  const isAdmin = ADMIN_ROLES.has(userRole);
+
+  const groups = isAdmin ? [...baseRouteGroups, adminRouteGroup] : baseRouteGroups;
+
   return (
     <Sidebar variant="sidebar" collapsible="icon">
-      <SidebarHeader className="pb-2">
-        <div className="rounded-xl border bg-gradient-to-br from-sidebar-accent/55 via-sidebar to-sidebar p-2.5">
-          <div className="flex items-center gap-2.5">
-            <div className="flex size-8 items-center justify-center rounded-lg border bg-background/80 shadow-xs">
-              <Logo className="size-4.5" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-semibold tracking-wide">Glare</p>
-              <p className="truncate text-[11px] text-muted-foreground">Personal Workspace</p>
-            </div>
-            <span className="rounded-full border bg-background/70 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
-              LIVE
-            </span>
+      <SidebarHeader className="pb-0">
+        <div className="flex items-center gap-2.5 px-1 py-1">
+          <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
+            <Logo className="size-4" />
+          </div>
+          <div className="min-w-0 flex-1 group-data-[collapsible=icon]:hidden">
+            <p className="truncate text-sm font-semibold leading-tight">Glare</p>
+            <p className="truncate text-xs text-muted-foreground">Personal Workspace</p>
           </div>
         </div>
       </SidebarHeader>
-      <SidebarSeparator />
+      <SidebarCommandPalette />
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <DashboardNavigation routes={workspaceRoutes} />
-          </SidebarGroupContent>
-        </SidebarGroup>
+        <DashboardNavigation groups={groups} />
       </SidebarContent>
       <SidebarFooter className="mt-auto px-2 pb-3">
         <NavUser />

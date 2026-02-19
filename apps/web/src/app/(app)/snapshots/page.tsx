@@ -1,40 +1,23 @@
 "use client";
 
 import {
-  RiErrorWarningLine,
-  RiArrowDownSLine,
   RiArrowRightSLine,
-  RiFileLine,
-  RiFileTextLine,
-  RiFolderLine,
-  RiFolderOpenLine,
   RiDownloadCloud2Line,
   RiLoader4Line,
-  RiShieldLine,
   RiTeamLine,
   RiTimerLine,
-  RiDeleteBinLine,
 } from "@remixicon/react";
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "@/lib/toast";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { DataTableFilter, useDataTableFilters, type FiltersState } from "@/components/data-table-filter";
-import { Alert, AlertAction, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
-import {
-  AlertDialog,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
+  DataTableFilter,
+  useDataTableFilters,
+  type FiltersState,
+} from "@/components/data-table-filter";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -44,1076 +27,41 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
 import { env } from "@glare/env/web";
-import {
-  parseAsBoolean,
-  parseAsString,
-  parseAsStringEnum,
-  useQueryState,
-} from "nuqs";
+import { parseAsBoolean, parseAsString, useQueryState } from "nuqs";
 import { Spinner } from "@/components/ui/spinner";
 
-const API_BASE = "/api";
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-type WorkerRecord = {
-  id: string;
-  name: string;
-  status: string;
-  isOnline: boolean;
-  lastSeenAt: string | null;
-};
-
-type RepositoryRecord = {
-  id: string;
-  name: string;
-  backend: string;
-  repository: string;
-  primaryWorker: WorkerRecord | null;
-  backupWorkers: WorkerRecord[];
-};
-
-type SnapshotRecord = {
-  id: string;
-  originalId?: string;
-  parentId?: string;
-  treeId?: string;
-  programVersion?: string;
-  time: string | null;
-  shortId: string;
-  label: string;
-  paths: string[];
-  sizeLabel: string;
-  durationLabel: string;
-  hostname?: string;
-  username?: string;
-  tags?: string[];
-  filesNew?: number;
-  filesChanged?: number;
-  filesUnmodified?: number;
-  totalBytesProcessed?: string;
-  totalFilesProcessed?: number;
-  totalDirsProcessed?: number;
-  dataBlobsAdded?: string;
-  treeBlobs?: number;
-};
-
-type SnapshotWorkerAttribution = {
-  snapshotId: string;
-  sourceSnapshotIds?: string[];
-  snapshotShortId: string;
-  snapshotTime: string | null;
-  runGroupIds: string[];
-  workerIds: string[];
-  workers: WorkerRecord[];
-  runCount: number;
-  successCount: number;
-  failureCount: number;
-  lastRunAt: string | null;
-};
-
-type SnapshotListItem =
-  | {
-      kind: "snapshot";
-      id: string;
-      time: string | null;
-      label: string;
-      workerSummary: string | null;
-      meta: string;
-      snapshot: SnapshotRecord;
-    }
-  | {
-      kind: "running" | "pending";
-      id: string;
-      time: string | null;
-      label: string;
-      workerSummary: string | null;
-      meta: string;
-      activity: SnapshotActivity;
-    };
-
-type SnapshotActivity = {
-  id: string;
-  kind: "running" | "pending";
-  status: "running" | "pending";
-  planId: string | null;
-  planName: string | null;
-  workerId: string | null;
-  workerName: string | null;
-  startedAt: string | null;
-  nextRunAt: string | null;
-  elapsedMs: number | null;
-  estimatedTotalMs: number | null;
-  progressPercent: number | null;
-  phase: string | null;
-  currentPath: string | null;
-  filesDone: number | null;
-  filesTotal: number | null;
-  bytesDone: number | null;
-  bytesTotal: number | null;
-  lastEventAt: string | null;
-  message: string;
-};
-
-type SnapshotWsMessage = {
-  event?: "ready" | "tick";
-  ts?: number;
-  repositoryId?: string;
-  activities?: SnapshotActivity[];
-};
-
-type FileEntry = {
-  name: string;
-  path: string;
-  kind: "file" | "dir";
-  sizeLabel: string;
-};
-
-type FileTreeNode = {
-  name: string;
-  path: string;
-  kind: "file" | "dir";
-  sizeLabel: string;
-  children: FileTreeNode[];
-};
-
-// ─── Helpers ─────────────────────────────────────────────────────────────────
-
-function parseMaybeJsonFromStdout(stdout: string | undefined) {
-  if (!stdout) return null;
-  try {
-    return JSON.parse(stdout) as unknown;
-  } catch {
-    const lines = stdout
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean)
-      .map((line) => {
-        try {
-          return JSON.parse(line) as unknown;
-        } catch {
-          return null;
-        }
-      })
-      .filter((line): line is unknown => line !== null);
-    return lines.length > 0 ? lines : null;
-  }
-}
-
-function numberToSize(value: unknown) {
-  const size =
-    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  if (!Number.isFinite(size) || size <= 0) return "";
-  const units = ["B", "KiB", "MiB", "GiB", "TiB"];
-  let current = size;
-  let idx = 0;
-  while (current >= 1024 && idx < units.length - 1) {
-    current /= 1024;
-    idx += 1;
-  }
-  return `${current.toFixed(current >= 10 ? 1 : 2)} ${units[idx]}`;
-}
-
-function numberToDuration(value: unknown) {
-  const sec =
-    typeof value === "number" ? value : typeof value === "string" ? Number(value) : NaN;
-  if (!Number.isFinite(sec) || sec <= 0) return "";
-  if (sec < 60) return `${Math.round(sec)}s`;
-  const min = Math.floor(sec / 60);
-  const rem = Math.round(sec % 60);
-  return `${min}m ${rem}s`;
-}
-
-function extractSnapshots(raw: unknown): SnapshotRecord[] {
-  const rootCandidates = Array.isArray(raw)
-    ? raw
-    : raw && typeof raw === "object"
-      ? (Object.values(raw as Record<string, unknown>).find(Array.isArray) ?? [])
-      : [];
-  if (!Array.isArray(rootCandidates)) return [];
-
-  const candidates = rootCandidates.flatMap((item) => {
-    if (
-      item &&
-      typeof item === "object" &&
-      "snapshots" in item &&
-      Array.isArray((item as { snapshots?: unknown }).snapshots)
-    ) {
-      return (item as { snapshots: unknown[] }).snapshots;
-    }
-    return [item];
-  });
-
-  return candidates
-    .map((item) => {
-      if (!item || typeof item !== "object") return null;
-      const record = item as Record<string, unknown>;
-      const summary =
-        record.summary && typeof record.summary === "object"
-          ? (record.summary as Record<string, unknown>)
-          : null;
-      const id =
-        (typeof record.id === "string" && record.id) ||
-        (typeof record.short_id === "string" && record.short_id) ||
-        (typeof record.snapshot_id === "string" && record.snapshot_id) ||
-        "";
-      if (!id) return null;
-
-      const time =
-        (typeof record.time === "string" && record.time) ||
-        (typeof record.timestamp === "string" && record.timestamp) ||
-        (typeof record.datetime === "string" && record.datetime) ||
-        null;
-      const shortId = id.slice(0, 8);
-      const paths = Array.isArray(record.paths)
-        ? record.paths.filter((path): path is string => typeof path === "string")
-        : [];
-      const sizeLabel = numberToSize(
-        record.total_size ??
-          record.size ??
-          record.bytes ??
-          summary?.total_bytes_processed ??
-          summary?.data_added_files ??
-          summary?.data_added,
-      );
-      const durationLabel = numberToDuration(
-        record.duration ??
-          record.duration_seconds ??
-          record.seconds ??
-          summary?.backup_duration ??
-          summary?.total_duration,
-      );
-      const label = time
-        ? `Backup ${new Date(time).toLocaleString()}`
-        : `Backup ${shortId}`;
-
-      const tags = Array.isArray(record.tags)
-        ? record.tags.filter((t): t is string => typeof t === "string")
-        : undefined;
-      const hostname =
-        typeof record.hostname === "string" ? record.hostname : undefined;
-      const username =
-        typeof record.username === "string" ? record.username : undefined;
-
-      const filesNew =
-        typeof summary?.files_new === "number"
-          ? summary.files_new
-          : typeof record.files_new === "number"
-            ? record.files_new
-            : undefined;
-      const filesChanged =
-        typeof summary?.files_changed === "number"
-          ? summary.files_changed
-          : typeof record.files_changed === "number"
-            ? record.files_changed
-            : undefined;
-      const filesUnmodified =
-        typeof summary?.files_unmodified === "number"
-          ? summary.files_unmodified
-          : typeof record.files_unmodified === "number"
-            ? record.files_unmodified
-            : undefined;
-      const totalBytesProcessed = numberToSize(
-        summary?.total_bytes_processed ?? record.total_bytes_processed,
-      );
-      const totalFilesProcessed =
-        typeof summary?.total_files_processed === "number"
-          ? summary.total_files_processed
-          : typeof record.total_files_processed === "number"
-            ? record.total_files_processed
-            : undefined;
-      const totalDirsProcessed =
-        typeof summary?.total_dirs_processed === "number"
-          ? summary.total_dirs_processed
-          : typeof record.total_dirs_processed === "number"
-            ? record.total_dirs_processed
-            : undefined;
-      const dataBlobsAdded = numberToSize(
-        summary?.data_added ?? record.data_added,
-      );
-      const treeBlobs =
-        typeof summary?.tree_blobs === "number"
-          ? summary.tree_blobs
-          : typeof record.tree_blobs === "number"
-            ? record.tree_blobs
-            : undefined;
-
-      return {
-        id,
-        originalId:
-          typeof record.original === "string" ? record.original : undefined,
-        parentId: typeof record.parent === "string" ? record.parent : undefined,
-        treeId: typeof record.tree === "string" ? record.tree : undefined,
-        programVersion:
-          typeof record.program_version === "string"
-            ? record.program_version
-            : undefined,
-        time,
-        shortId,
-        label,
-        paths,
-        sizeLabel,
-        durationLabel,
-        hostname,
-        username,
-        tags,
-        filesNew,
-        filesChanged,
-        filesUnmodified,
-        totalBytesProcessed,
-        totalFilesProcessed: totalFilesProcessed as number | undefined,
-        totalDirsProcessed: totalDirsProcessed as number | undefined,
-        dataBlobsAdded,
-        treeBlobs,
-      } as SnapshotRecord;
-    })
-    .filter((item): item is SnapshotRecord => item !== null)
-    .sort((a, b) => {
-      const aMs = a.time ? new Date(a.time).getTime() : 0;
-      const bMs = b.time ? new Date(b.time).getTime() : 0;
-      return bMs - aMs;
-    });
-}
-
-function extractFileEntries(raw: unknown): FileEntry[] {
-  const nodes: Record<string, unknown>[] = [];
-  const stringPaths: string[] = [];
-  const stack: unknown[] = [raw];
-
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) continue;
-    if (typeof current === "string") {
-      const normalized = current.trim().replace(/^\/+|\/+$/g, "");
-      if (normalized) stringPaths.push(normalized);
-      continue;
-    }
-    if (Array.isArray(current)) {
-      for (const item of current) stack.push(item);
-      continue;
-    }
-    if (typeof current !== "object") continue;
-
-    const record = current as Record<string, unknown>;
-    const hasPathLikeField =
-      typeof record.path === "string" ||
-      typeof record.name === "string" ||
-      typeof record.file === "string";
-    if (hasPathLikeField) {
-      nodes.push(record);
-    }
-
-    for (const value of Object.values(record)) {
-      if (Array.isArray(value) || (value && typeof value === "object")) {
-        stack.push(value);
-      }
-    }
-  }
-
-  const objectEntries = nodes
-    .map((record) => {
-      const pathValue =
-        (typeof record.path === "string" && record.path) ||
-        (typeof record.file === "string" && record.file) ||
-        (typeof record.name === "string" && record.name) ||
-        "";
-      if (!pathValue) return null;
-
-      const typeValue =
-        `${record.type ?? record.kind ?? record.node_type ?? ""}`.toLowerCase();
-      const kind: "file" | "dir" =
-        typeValue.includes("dir") || typeValue.includes("tree") || typeValue === "d"
-          ? "dir"
-          : "file";
-      const segments = pathValue.split("/").filter(Boolean);
-      const name =
-        segments.length > 0 ? segments[segments.length - 1]! : pathValue;
-      return {
-        name,
-        path: pathValue,
-        kind,
-        sizeLabel: numberToSize(
-          record.size ?? record.total_size ?? record.bytes,
-        ),
-      } as FileEntry;
-    })
-    .filter((item): item is FileEntry => item !== null);
-
-  const pathCandidates = Array.from(new Set(stringPaths));
-  const stringEntries =
-    pathCandidates.length === 0
-      ? []
-      : pathCandidates.map((pathValue) => {
-          const hasChildren = pathCandidates.some(
-            (candidate) =>
-              candidate !== pathValue &&
-              candidate.startsWith(`${pathValue}/`),
-          );
-          const segments = pathValue.split("/").filter(Boolean);
-          const name =
-            segments.length > 0
-              ? segments[segments.length - 1]!
-              : pathValue;
-          return {
-            name,
-            path: pathValue,
-            kind: hasChildren ? "dir" : "file",
-            sizeLabel: "",
-          } as FileEntry;
-        });
-
-  const entries = [...objectEntries, ...stringEntries];
-
-  return entries.sort((a, b) => {
-    if (a.kind !== b.kind) return a.kind === "dir" ? -1 : 1;
-    return a.name.localeCompare(b.name);
-  });
-}
-
-function formatSnapshotMeta(snapshot: SnapshotRecord) {
-  const chunks = [] as string[];
-  if (snapshot.sizeLabel) chunks.push(snapshot.sizeLabel);
-  if (snapshot.durationLabel) chunks.push(`in ${snapshot.durationLabel}`);
-  chunks.push(`ID: ${snapshot.shortId}`);
-  return chunks.join(", ");
-}
-
-function formatDurationMs(ms: number | null) {
-  if (!ms || ms <= 0) return "—";
-  const totalSeconds = Math.floor(ms / 1000);
-  if (totalSeconds < 60) return `${totalSeconds}s`;
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  if (minutes < 60) return `${minutes}m ${seconds}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m`;
-}
-
-function formatTimeUntil(isoTime: string | null) {
-  if (!isoTime) return "—";
-  const deltaMs = new Date(isoTime).getTime() - Date.now();
-  if (deltaMs <= 0) return "now";
-  const seconds = Math.floor(deltaMs / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ${minutes % 60}m`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ${hours % 24}h`;
-}
-
-function normalizeSnapshotKey(value: string) {
-  return value.trim().toLowerCase();
-}
-
-function parseTimestampMs(value: string | null | undefined) {
-  if (!value) return Number.NaN;
-  const trimmed = value.trim();
-  if (!trimmed) return Number.NaN;
-
-  const candidates = new Set<string>();
-  candidates.add(trimmed);
-
-  // Normalize "YYYY-MM-DD HH:mm:ss" -> "YYYY-MM-DDTHH:mm:ss"
-  candidates.add(trimmed.replace(/^(\d{4}-\d{2}-\d{2})\s+/, "$1T"));
-
-  // Remove separator before timezone: "...ss +00:00" -> "...ss+00:00"
-  candidates.add(trimmed.replace(/\s+([+-]\d{2}:\d{2}|[+-]\d{4}|Z)$/i, "$1"));
-  candidates.add(
-    trimmed
-      .replace(/^(\d{4}-\d{2}-\d{2})\s+/, "$1T")
-      .replace(/\s+([+-]\d{2}:\d{2}|[+-]\d{4}|Z)$/i, "$1"),
-  );
-
-  for (const candidate of candidates) {
-    const parsed = Date.parse(candidate);
-    if (Number.isFinite(parsed)) return parsed;
-
-    // If timezone is missing, assume UTC and retry.
-    const hasZone = /([zZ]|[+-]\d{2}:\d{2}|[+-]\d{4})$/.test(candidate);
-    if (!hasZone) {
-      const parsedUtc = Date.parse(`${candidate}Z`);
-      if (Number.isFinite(parsedUtc)) return parsedUtc;
-    }
-  }
-
-  return Number.NaN;
-}
-
-function getSnapshotFileLoadHint(message: string) {
-  const normalized = message.toLowerCase();
-  if (normalized.includes("tree id") && normalized.includes("not found in index")) {
-    return [
-      "Repository index appears inconsistent for this snapshot.",
-      "Run: rustic check",
-      "Then: rustic repair index",
-      "Retry loading files for this snapshot.",
-    ].join("\n");
-  }
-  if (normalized.includes("rustic_core") && normalized.includes("internal operations")) {
-    return [
-      "Snapshot file listing failed inside rustic internal operations.",
-      "Run: rustic check",
-      "Then: rustic repair index",
-      "Retry loading files for this snapshot.",
-    ].join("\n");
-  }
-  if (normalized.includes("lock") && normalized.includes("repository")) {
-    return [
-      "Repository appears to be locked by another process.",
-      "Wait for current operation to finish, then retry.",
-      "If lock is stale, run: rustic unlock",
-    ].join("\n");
-  }
-  return null;
-}
-
-function sanitizeWorkerErrorMessage(message: string) {
-  return message.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "").trim();
-}
-
-function buildSnapshotStreamWebSocketUrl(repositoryId: string) {
-  if (!repositoryId) return null;
-
-  const rawBase =
-    env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ??
-    (typeof window !== "undefined" ? window.location.origin : "");
-  if (!rawBase) return null;
-
-  const wsBase = rawBase.startsWith("https://")
-    ? `wss://${rawBase.slice("https://".length)}`
-    : rawBase.startsWith("http://")
-      ? `ws://${rawBase.slice("http://".length)}`
-      : rawBase;
-
-  if (!wsBase.startsWith("ws://") && !wsBase.startsWith("wss://")) {
-    return null;
-  }
-
-  return `${wsBase}/api/rustic/repositories/${repositoryId}/snapshot-ws`;
-}
-
-function monthKey(date: Date) {
-  return `${String(date.getMonth() + 1).padStart(2, "0")}/${date.getFullYear()}`;
-}
-
-function dayKey(date: Date) {
-  return `${String(date.getMonth() + 1).padStart(2, "0")}/${String(date.getDate()).padStart(2, "0")}/${date.getFullYear()}`;
-}
-
-// ─── Sub-components ──────────────────────────────────────────────────────────
-
-function SnapshotDetailPanel({
-  snapshot,
-  workers,
-  runSummary,
-  fileTree,
-  isFilesLoading,
-  fileBrowserHint,
-  isRunningRepositoryCheck,
-  isRunningRepositoryRepairIndex,
-  onRunRepositoryCheck,
-  onRunRepositoryRepairIndex,
-  openFileNodes,
-  setOpenFileNodes,
-  onForget,
-}: {
-  snapshot: SnapshotRecord;
-  workers: WorkerRecord[];
-  runSummary: { runCount: number; successCount: number; failureCount: number } | null;
-  fileTree: FileTreeNode[];
-  isFilesLoading: boolean;
-  fileBrowserHint: string | null;
-  isRunningRepositoryCheck: boolean;
-  isRunningRepositoryRepairIndex: boolean;
-  onRunRepositoryCheck?: () => Promise<void> | void;
-  onRunRepositoryRepairIndex?: () => Promise<void> | void;
-  openFileNodes: Record<string, boolean>;
-  setOpenFileNodes: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-  onForget?: (snapshotId: string) => Promise<void> | void;
-}) {
-  const [isForgetDialogOpen, setIsForgetDialogOpen] = useState(false);
-  const [isForgetting, setIsForgetting] = useState(false);
-
-  const formattedTime = snapshot.time
-    ? new Date(snapshot.time).toLocaleString("en-US", {
-        month: "2-digit",
-        day: "2-digit",
-        year: "numeric",
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-      })
-    : snapshot.shortId;
-
-  return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">{formattedTime}</h2>
-        {onForget && (
-          <>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="text-xs text-destructive hover:text-destructive"
-              disabled={isForgetting}
-              onClick={() => setIsForgetDialogOpen(true)}
-            >
-              <RiDeleteBinLine className="mr-1.5 size-3.5" />
-              Forget (Destructive)
-            </Button>
-            <AlertDialog open={isForgetDialogOpen} onOpenChange={setIsForgetDialogOpen}>
-              <AlertDialogContent>
-                <AlertDialogHeader>
-                  <AlertDialogTitle>Forget snapshot?</AlertDialogTitle>
-                  <AlertDialogDescription>
-                    Snapshot {snapshot.id.slice(0, 8)} will be permanently removed from the repository.
-                    This action cannot be undone.
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <Button
-                    variant="outline"
-                    onClick={() => setIsForgetDialogOpen(false)}
-                    disabled={isForgetting}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    variant="destructive"
-                    disabled={isForgetting}
-                    onClick={async () => {
-                      setIsForgetting(true);
-                      setIsForgetDialogOpen(false);
-                      try {
-                        await onForget(snapshot.id);
-                      } finally {
-                        setIsForgetting(false);
-                      }
-                    }}
-                  >
-                    {isForgetting ? "Forgetting..." : "Forget Snapshot"}
-                  </Button>
-                </AlertDialogFooter>
-              </AlertDialogContent>
-            </AlertDialog>
-          </>
-        )}
-      </div>
-
-      {/* Timeline content */}
-      <div className="flex-1 overflow-y-auto px-3 py-2">
-        <div className="relative space-y-3">
-          {/* ── Snapshot operation ── */}
-          <TimelineEntry
-            icon={<RiShieldLine className="size-3.5 text-amber-500" />}
-            title={`${formattedTime} - Snapshot`}
-            subtitle={snapshot.durationLabel ? `in ${snapshot.durationLabel}` : undefined}
-            defaultOpen
-          >
-            <Collapsible defaultOpen>
-              <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs font-medium">
-                <RiArrowDownSLine className="size-3 transition-transform [[data-state=closed]>&]:rotate-[-90deg]" />
-                Details
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="mt-1.5 space-y-2 rounded-md border bg-muted/30 p-2.5">
-                  <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
-                    <DetailRow label="Snapshot ID" value={snapshot.shortId} />
-                    <DetailRow
-                      label="Rustic Version"
-                      value={snapshot.programVersion ?? "—"}
-                    />
-                    <DetailRow
-                      label="Original ID"
-                      value={snapshot.originalId ?? "—"}
-                    />
-                    <DetailRow
-                      label="Parent ID"
-                      value={snapshot.parentId ?? "—"}
-                    />
-                    <DetailRow label="Tree ID" value={snapshot.treeId ?? "—"} />
-                    <DetailRow
-                      label="Workers"
-                      value={
-                        workers.length > 0
-                          ? workers.map((worker) => worker.name).join(", ")
-                          : "Unknown"
-                      }
-                    />
-                    <DetailRow
-                      label="Worker Runs"
-                      value={
-                        runSummary
-                          ? `${runSummary.successCount} succeeded / ${runSummary.failureCount} failed (${runSummary.runCount} total)`
-                          : "—"
-                      }
-                    />
-                  </div>
-                  <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
-                    <DetailRow
-                      label="User and Host"
-                      value={
-                        snapshot.username || snapshot.hostname
-                          ? `${snapshot.username ?? ""}@${snapshot.hostname ?? ""}`
-                          : "—"
-                      }
-                    />
-                    <DetailRow
-                      label="Tags"
-                      value={
-                        snapshot.tags && snapshot.tags.length > 0
-                          ? snapshot.tags.join(", ")
-                          : "—"
-                      }
-                    />
-                  </div>
-                  <Separator />
-                  <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-3">
-                    <DetailRow
-                      label="Files Added"
-                      value={snapshot.filesNew?.toLocaleString() ?? "—"}
-                    />
-                    <DetailRow
-                      label="Files Changed"
-                      value={snapshot.filesChanged?.toLocaleString() ?? "—"}
-                    />
-                    <DetailRow
-                      label="Files Unmodified"
-                      value={snapshot.filesUnmodified?.toLocaleString() ?? "—"}
-                    />
-                  </div>
-                  <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-3">
-                    <DetailRow
-                      label="Bytes Added"
-                      value={snapshot.dataBlobsAdded || "—"}
-                    />
-                    <DetailRow
-                      label="Total Bytes Processed"
-                      value={snapshot.totalBytesProcessed || "—"}
-                    />
-                    <DetailRow
-                      label="Total Files Processed"
-                      value={
-                        snapshot.totalFilesProcessed?.toLocaleString() ?? "—"
-                      }
-                    />
-                    <DetailRow
-                      label="Total Dirs Processed"
-                      value={
-                        snapshot.totalDirsProcessed?.toLocaleString() ?? "—"
-                      }
-                    />
-                    <DetailRow
-                      label="Tree Blobs"
-                      value={snapshot.treeBlobs?.toLocaleString() ?? "—"}
-                    />
-                  </div>
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-
-            {/* Snapshot Browser */}
-            <Collapsible defaultOpen className="mt-2">
-              <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs font-medium">
-                <RiArrowDownSLine className="size-3 transition-transform [[data-state=closed]>&]:rotate-[-90deg]" />
-                Snapshot Browser
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="mt-2 rounded-md border bg-muted/30 p-2">
-                  {fileBrowserHint && (
-                    <Alert variant="warning" className="mb-2">
-                      <RiErrorWarningLine className="size-4" />
-                      <AlertTitle>Snapshot index issue detected</AlertTitle>
-                      <AlertDescription>
-                        {fileBrowserHint.split("\n").map((line) => (
-                          <span key={line} className="block text-xs">
-                            {line}
-                          </span>
-                        ))}
-                      </AlertDescription>
-                      <AlertAction>
-                        <Button
-                          size="xs"
-                          variant="outline"
-                          disabled={
-                            isRunningRepositoryCheck ||
-                            isRunningRepositoryRepairIndex ||
-                            !onRunRepositoryCheck
-                          }
-                          onClick={() => void onRunRepositoryCheck?.()}
-                        >
-                          {isRunningRepositoryCheck ? "Running check..." : "Run Check"}
-                        </Button>
-                        <Button
-                          size="xs"
-                          variant="destructive"
-                          disabled={
-                            isRunningRepositoryCheck ||
-                            isRunningRepositoryRepairIndex ||
-                            !onRunRepositoryRepairIndex
-                          }
-                          onClick={() => void onRunRepositoryRepairIndex?.()}
-                        >
-                          {isRunningRepositoryRepairIndex
-                            ? "Repairing..."
-                            : "Repair Index"}
-                        </Button>
-                      </AlertAction>
-                    </Alert>
-                  )}
-                  {isFilesLoading ? (
-                    <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
-                      <RiLoader4Line className="size-3.5 animate-spin" />
-                      Loading files...
-                    </div>
-                  ) : fileTree.length === 0 ? (
-                    <p className="py-4 text-xs text-muted-foreground">
-                      No files found.
-                    </p>
-                  ) : (
-                    <FileTreeView
-                      nodes={fileTree}
-                      openFileNodes={openFileNodes}
-                      setOpenFileNodes={setOpenFileNodes}
-                    />
-                  )}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </TimelineEntry>
-
-          {/* ── Backup operation ── */}
-          <TimelineEntry
-            icon={<RiDownloadCloud2Line className="size-3.5 text-emerald-500" />}
-            title={`${formattedTime} - Backup`}
-            subtitle={snapshot.durationLabel ? `in ${snapshot.durationLabel}` : undefined}
-          >
-            <Collapsible>
-              <CollapsibleTrigger className="flex w-full items-center gap-1.5 text-xs font-medium">
-                <RiArrowRightSLine className="size-3 transition-transform [[data-state=open]>&]:rotate-90" />
-                Backup Details
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <div className="mt-2 space-y-2 rounded-md border bg-muted/30 p-3">
-                  <DetailRow label="Paths" value={snapshot.paths.join(", ") || "—"} />
-                  <DetailRow label="Size" value={snapshot.sizeLabel || "—"} />
-                  <DetailRow label="Duration" value={snapshot.durationLabel || "—"} />
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          </TimelineEntry>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function TimelineEntry({
-  icon,
-  title,
-  subtitle,
-  children,
-  defaultOpen = false,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  subtitle?: string;
-  children: React.ReactNode;
-  defaultOpen?: boolean;
-}) {
-  const [isOpen, setIsOpen] = useState(defaultOpen);
-
-  return (
-    <div className="relative pl-6">
-      {/* Timeline dot */}
-      <div className="absolute left-0 top-0.5 flex size-5 items-center justify-center rounded-full border bg-background">
-        {icon}
-      </div>
-      {/* Timeline line */}
-      <div className="absolute bottom-0 left-[9px] top-6 w-px bg-border" />
-
-      <button
-        type="button"
-        className="mb-1 flex items-center gap-2 text-xs"
-        onClick={() => setIsOpen(!isOpen)}
-      >
-        <span className="font-medium">{title}</span>
-        {subtitle && (
-          <span className="text-muted-foreground">{subtitle}</span>
-        )}
-      </button>
-
-      {isOpen && <div className="space-y-2 pb-2">{children}</div>}
-    </div>
-  );
-}
-
-function DetailRow({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0 space-y-0.5">
-      <dt className="text-[10px] font-medium leading-none text-muted-foreground">{label}</dt>
-      <dd className="truncate text-[11px] leading-snug" title={value}>
-        {value}
-      </dd>
-    </div>
-  );
-}
-
-function SnapshotActivityDetailPanel({ activity }: { activity: SnapshotActivity }) {
-  const progress = Math.max(0, Math.min(100, activity.progressPercent ?? 0));
-  const filesProgress =
-    activity.filesDone !== null && activity.filesTotal !== null
-      ? `${activity.filesDone.toLocaleString()} / ${activity.filesTotal.toLocaleString()}`
-      : "—";
-  const bytesProgress =
-    activity.bytesDone !== null && activity.bytesTotal !== null
-      ? `${numberToSize(activity.bytesDone)} / ${numberToSize(activity.bytesTotal)}`
-      : "—";
-
-  return (
-    <div className="flex h-full flex-col">
-      <div className="flex items-center justify-between border-b px-4 py-3">
-        <h2 className="text-sm font-semibold">
-          {activity.planName ?? "Snapshot plan"}{" "}
-          <span className="text-muted-foreground font-normal">
-            ({activity.kind === "running" ? "In Progress" : "Pending"})
-          </span>
-        </h2>
-        <Badge variant={activity.kind === "running" ? "default" : "outline"}>
-          {activity.kind === "running" ? "Running" : "Pending"}
-        </Badge>
-      </div>
-      <div className="flex-1 overflow-y-auto px-3 py-2">
-        <div className="space-y-2 rounded-md border bg-muted/30 p-2.5">
-          <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
-            <DetailRow label="Worker" value={activity.workerName ?? "—"} />
-            <DetailRow
-              label="Started"
-              value={activity.startedAt ? new Date(activity.startedAt).toLocaleString() : "—"}
-            />
-            <DetailRow
-              label="Next Run"
-              value={activity.nextRunAt ? new Date(activity.nextRunAt).toLocaleString() : "—"}
-            />
-            <DetailRow
-              label="Elapsed"
-              value={
-                activity.elapsedMs !== null
-                  ? formatDurationMs(activity.elapsedMs)
-                  : "—"
-              }
-            />
-            <DetailRow label="Phase" value={activity.phase ?? "—"} />
-            <DetailRow label="Current Path" value={activity.currentPath ?? "—"} />
-            <DetailRow label="Files" value={filesProgress} />
-            <DetailRow label="Bytes" value={bytesProgress} />
-            <DetailRow
-              label="Last Update"
-              value={activity.lastEventAt ? new Date(activity.lastEventAt).toLocaleString() : "—"}
-            />
-          </div>
-          <DetailRow label="Current Task" value={activity.message || "Waiting for update..."} />
-          {activity.kind === "running" ? (
-            <div>
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full bg-primary transition-all duration-500"
-                  style={{ width: `${progress}%` }}
-                />
-              </div>
-              <div className="mt-1 text-[11px] text-muted-foreground">
-                {progress > 0 ? `${progress}%` : "Estimating progress..."}
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function FileTreeView({
-  nodes,
-  openFileNodes,
-  setOpenFileNodes,
-  depth = 0,
-}: {
-  nodes: FileTreeNode[];
-  openFileNodes: Record<string, boolean>;
-  setOpenFileNodes: React.Dispatch<React.SetStateAction<Record<string, boolean>>>;
-  depth?: number;
-}) {
-  return (
-    <div className="space-y-0.5">
-      {nodes.map((node) => {
-        const isOpen = openFileNodes[node.path] ?? depth < 1;
-        return (
-          <div key={node.path}>
-            <button
-              type="button"
-              className="flex w-full items-center gap-1.5 rounded px-1.5 py-0.5 text-left text-xs hover:bg-muted/60"
-              style={{ paddingLeft: `${6 + depth * 16}px` }}
-              onClick={() => {
-                if (node.kind === "dir") {
-                  setOpenFileNodes((current) => ({
-                    ...current,
-                    [node.path]: !isOpen,
-                  }));
-                }
-              }}
-            >
-              {node.kind === "dir" ? (
-                <>
-                  <RiArrowRightSLine
-                    className={`size-3 shrink-0 transition-transform ${isOpen ? "rotate-90" : ""}`}
-                  />
-                  {isOpen ? (
-                    <RiFolderOpenLine className="size-3.5 shrink-0 text-amber-500" />
-                  ) : (
-                    <RiFolderLine className="size-3.5 shrink-0 text-amber-500" />
-                  )}
-                </>
-              ) : (
-                <>
-                  <span className="inline-block w-3 shrink-0" />
-                  {node.name.endsWith(".txt") || node.name.endsWith(".md") ? (
-                    <RiFileTextLine className="size-3.5 shrink-0 text-sky-500" />
-                  ) : (
-                    <RiFileLine className="size-3.5 shrink-0 text-muted-foreground" />
-                  )}
-                </>
-              )}
-              <span className="truncate">{node.name}</span>
-              {node.sizeLabel && (
-                <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-                  {node.sizeLabel}
-                </span>
-              )}
-            </button>
-            {node.kind === "dir" && isOpen && node.children.length > 0 ? (
-              <FileTreeView
-                nodes={node.children}
-                openFileNodes={openFileNodes}
-                setOpenFileNodes={setOpenFileNodes}
-                depth={depth + 1}
-              />
-            ) : null}
-          </div>
-        );
-      })}
-    </div>
-  );
-}
+import {
+  API_BASE,
+  type WorkerRecord,
+  type RepositoryRecord,
+  type SnapshotRecord,
+  type SnapshotWorkerAttribution,
+  type SnapshotListItem,
+  type SnapshotActivity,
+  type SnapshotWsMessage,
+  type FileEntry,
+  type FileTreeNode,
+  numberToSize,
+  parseMaybeJsonFromStdout,
+  extractSnapshots,
+  extractFileEntries,
+  formatSnapshotMeta,
+  formatDurationMs,
+  formatTimeUntil,
+  normalizeSnapshotKey,
+  parseTimestampMs,
+  getSnapshotFileLoadHint,
+  sanitizeWorkerErrorMessage,
+  buildSnapshotStreamWebSocketUrl,
+  monthKey,
+  dayKey,
+} from "./_components/snapshot-helpers";
+import { SnapshotDetailPanel, SnapshotActivityDetailPanel } from "./_components/snapshot-panels";
 
 // ─── Main Page ───────────────────────────────────────────────────────────────
 
@@ -1130,12 +78,6 @@ function SnapshotsPageContent() {
   const [isAttributionLoading, setIsAttributionLoading] = useState(false);
   const [isActivityLoading, setIsActivityLoading] = useState(false);
   const [isTriggeringBackup, setIsTriggeringBackup] = useState(false);
-  const [viewMode, setViewMode] = useQueryState(
-    "viewMode",
-    parseAsStringEnum(["tree", "list"])
-      .withDefault("tree")
-      .withOptions({ history: "replace" }),
-  );
   const [snapshotWorkerFilterId, setSnapshotWorkerFilterId] = useQueryState(
     "snapshotWorkerFilterId",
     parseAsString.withDefault("all").withOptions({ history: "replace" }),
@@ -1172,12 +114,17 @@ function SnapshotsPageContent() {
   const [fileBrowserHint, setFileBrowserHint] = useState<string | null>(null);
   const [isRunningRepositoryCheck, setIsRunningRepositoryCheck] = useState(false);
   const [isRunningRepositoryRepairIndex, setIsRunningRepositoryRepairIndex] = useState(false);
+  const [isDiffingSnapshot, setIsDiffingSnapshot] = useState(false);
+  const [diffSummary, setDiffSummary] = useState<{
+    added: number;
+    removed: number;
+    changed: number;
+  } | null>(null);
+  const [isRestoringSnapshot, setIsRestoringSnapshot] = useState(false);
 
   const [openMonths, setOpenMonths] = useState<Record<string, boolean>>({});
   const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
-  const [openFileNodes, setOpenFileNodes] = useState<Record<string, boolean>>(
-    {},
-  );
+  const [openFileNodes, setOpenFileNodes] = useState<Record<string, boolean>>({});
   const realtimeRefreshInFlightRef = useRef(false);
   const selectedRepository =
     repositories.find((repository) => repository.id === selectedRepositoryId) ?? null;
@@ -1205,9 +152,7 @@ function SnapshotsPageContent() {
       const repositoryList = data.repositories ?? [];
       setRepositories(repositoryList);
       if (repositoryList.length > 0) {
-        setSelectedRepositoryId(
-          (current) => current || repositoryList[0]!.id,
-        );
+        setSelectedRepositoryId((current) => current || repositoryList[0]!.id);
       }
     } catch {
       toast.error("Could not load repositories for snapshots.");
@@ -1217,16 +162,13 @@ function SnapshotsPageContent() {
   }, [session?.user]);
 
   const loadSnapshots = useCallback(
-    async (
-      repositoryId: string,
-      options?: { silent?: boolean; preserveSelection?: boolean },
-    ) => {
+    async (repositoryId: string, options?: { silent?: boolean; preserveSelection?: boolean }) => {
       const silent = options?.silent ?? false;
       const preserveSelection = options?.preserveSelection ?? false;
-    if (!repositoryId) {
-      setSnapshots([]);
-      return;
-    }
+      if (!repositoryId) {
+        setSnapshots([]);
+        return;
+      }
 
       if (!silent) {
         setIsSnapshotsLoading(true);
@@ -1240,38 +182,36 @@ function SnapshotsPageContent() {
       }
 
       try {
-      const data = await apiFetchJson<{
-        rustic?: {
-          parsedJson?: unknown;
-          parsed_json?: unknown;
-          stdout?: string;
-        };
-      }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshots`, {
-        method: "POST",
-        retries: 1,
-      });
-      const parsed =
-        data.rustic?.parsedJson ??
-        data.rustic?.parsed_json ??
-        parseMaybeJsonFromStdout(data.rustic?.stdout);
-      const parsedSnapshots = extractSnapshots(parsed);
-      setSnapshots(parsedSnapshots);
+        const data = await apiFetchJson<{
+          rustic?: {
+            parsedJson?: unknown;
+            parsed_json?: unknown;
+            stdout?: string;
+          };
+        }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshots`, {
+          method: "POST",
+          retries: 1,
+        });
+        const parsed =
+          data.rustic?.parsedJson ??
+          data.rustic?.parsed_json ??
+          parseMaybeJsonFromStdout(data.rustic?.stdout);
+        const parsedSnapshots = extractSnapshots(parsed);
+        setSnapshots(parsedSnapshots);
 
-      if (!preserveSelection && parsedSnapshots.length > 0) {
-        setSelectedSnapshotId(parsedSnapshots[0]!.id);
-      }
-    } catch (error) {
+        if (!preserveSelection && parsedSnapshots.length > 0) {
+          setSelectedSnapshotId(parsedSnapshots[0]!.id);
+        }
+      } catch (error) {
         if (!silent) {
-          toast.error(
-            error instanceof Error ? error.message : "Could not load snapshots.",
-          );
+          toast.error(error instanceof Error ? error.message : "Could not load snapshots.");
           setSnapshots([]);
         }
-    } finally {
+      } finally {
         if (!silent) {
           setIsSnapshotsLoading(false);
         }
-    }
+      }
     },
     [],
   );
@@ -1279,36 +219,34 @@ function SnapshotsPageContent() {
   const loadSnapshotAttribution = useCallback(
     async (repositoryId: string, options?: { silent?: boolean }) => {
       const silent = options?.silent ?? false;
-    if (!repositoryId) {
-      setSnapshotAttribution([]);
-      return;
-    }
+      if (!repositoryId) {
+        setSnapshotAttribution([]);
+        return;
+      }
 
       if (!silent) {
         setIsAttributionLoading(true);
       }
       try {
-      const data = await apiFetchJson<{
-        snapshots?: SnapshotWorkerAttribution[];
-      }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshot-workers`, {
-        method: "GET",
-        retries: 1,
-      });
-      setSnapshotAttribution(data.snapshots ?? []);
-    } catch (error) {
+        const data = await apiFetchJson<{
+          snapshots?: SnapshotWorkerAttribution[];
+        }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshot-workers`, {
+          method: "GET",
+          retries: 1,
+        });
+        setSnapshotAttribution(data.snapshots ?? []);
+      } catch (error) {
         if (!silent) {
           toast.error(
-            error instanceof Error
-              ? error.message
-              : "Could not load snapshot worker attribution.",
+            error instanceof Error ? error.message : "Could not load snapshot worker attribution.",
           );
           setSnapshotAttribution([]);
         }
-    } finally {
+      } finally {
         if (!silent) {
           setIsAttributionLoading(false);
         }
-    }
+      }
     },
     [],
   );
@@ -1316,46 +254,40 @@ function SnapshotsPageContent() {
   const loadSnapshotActivity = useCallback(
     async (repositoryId: string, options?: { silent?: boolean }) => {
       const silent = options?.silent ?? false;
-    if (!repositoryId) {
-      setSnapshotActivity([]);
-      return;
-    }
+      if (!repositoryId) {
+        setSnapshotActivity([]);
+        return;
+      }
 
       if (!silent) {
         setIsActivityLoading(true);
       }
       try {
-      const data = await apiFetchJson<{
-        activities?: SnapshotActivity[];
-      }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshot-activity`, {
-        method: "GET",
-        retries: 1,
-      });
-      setSnapshotActivity(data.activities ?? []);
-    } catch (error) {
+        const data = await apiFetchJson<{
+          activities?: SnapshotActivity[];
+        }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshot-activity`, {
+          method: "GET",
+          retries: 1,
+        });
+        setSnapshotActivity(data.activities ?? []);
+      } catch (error) {
         if (!silent) {
-          toast.error(
-            error instanceof Error
-              ? error.message
-              : "Could not load snapshot activity.",
-          );
+          toast.error(error instanceof Error ? error.message : "Could not load snapshot activity.");
           setSnapshotActivity([]);
         }
-    } finally {
+      } finally {
         if (!silent) {
           setIsActivityLoading(false);
         }
-    }
+      }
     },
     [],
   );
 
   const loadFiles = useCallback(
     async (snapshotId: string, workerId?: string) => {
-      const normalizedSnapshotId =
-        typeof snapshotId === "string" ? snapshotId.trim() : "";
-      const normalizedWorkerId =
-        typeof workerId === "string" ? workerId.trim() : "";
+      const normalizedSnapshotId = typeof snapshotId === "string" ? snapshotId.trim() : "";
+      const normalizedWorkerId = typeof workerId === "string" ? workerId.trim() : "";
       const hasValidSnapshotId =
         normalizedSnapshotId.length > 0 &&
         normalizedSnapshotId !== "undefined" &&
@@ -1395,13 +327,10 @@ function SnapshotsPageContent() {
           parseMaybeJsonFromStdout(data.rustic?.stdout);
         setFiles(extractFileEntries(parsed));
       } catch (error) {
-        const rawMessage =
-          error instanceof Error ? error.message : "Could not load file browser.";
+        const rawMessage = error instanceof Error ? error.message : "Could not load file browser.";
         const message = sanitizeWorkerErrorMessage(rawMessage);
         setFileBrowserHint(getSnapshotFileLoadHint(message));
-        toast.error(
-          message,
-        );
+        toast.error(message);
         setFiles([]);
       } finally {
         setIsFilesLoading(false);
@@ -1462,7 +391,10 @@ function SnapshotsPageContent() {
     const connectWebSocket = () => {
       if (isDisposed) return;
 
-      const wsUrl = buildSnapshotStreamWebSocketUrl(selectedRepositoryId);
+      const wsUrl = buildSnapshotStreamWebSocketUrl(
+        selectedRepositoryId,
+        env.NEXT_PUBLIC_SERVER_URL,
+      );
       if (!wsUrl) {
         ensureFallbackPolling();
         return;
@@ -1654,7 +586,8 @@ function SnapshotsPageContent() {
       const full = attributionLookup.byFullId.get(normalizeSnapshotKey(snapshot.id));
       if (full) return full;
 
-      const shortMatches = attributionLookup.byShortId.get(normalizeSnapshotKey(snapshot.shortId)) ?? [];
+      const shortMatches =
+        attributionLookup.byShortId.get(normalizeSnapshotKey(snapshot.shortId)) ?? [];
       const snapshotMs = parseTimestampMs(snapshot.time);
       const hasSnapshotTime = Number.isFinite(snapshotMs);
 
@@ -1670,9 +603,7 @@ function SnapshotsPageContent() {
                     : null,
                 )
                 .filter(
-                  (
-                    candidate,
-                  ): candidate is { entry: SnapshotWorkerAttribution; timeMs: number } =>
+                  (candidate): candidate is { entry: SnapshotWorkerAttribution; timeMs: number } =>
                     candidate !== null && Number.isFinite(candidate.timeMs),
                 )
             : attributionLookup.timed;
@@ -1750,13 +681,19 @@ function SnapshotsPageContent() {
   }, [displaySnapshots, resolveAttributionForSnapshot, snapshotActivity]);
 
   useEffect(() => {
-    if (selectedSnapshotId && !displaySnapshots.some((snapshot) => snapshot.id === selectedSnapshotId)) {
+    if (
+      selectedSnapshotId &&
+      !displaySnapshots.some((snapshot) => snapshot.id === selectedSnapshotId)
+    ) {
       setSelectedSnapshotId("");
     }
   }, [displaySnapshots, selectedSnapshotId]);
 
   useEffect(() => {
-    if (selectedActivityId && !snapshotActivity.some((activity) => `activity:${activity.id}` === selectedActivityId)) {
+    if (
+      selectedActivityId &&
+      !snapshotActivity.some((activity) => `activity:${activity.id}` === selectedActivityId)
+    ) {
       setSelectedActivityId("");
     }
   }, [snapshotActivity, selectedActivityId]);
@@ -1796,6 +733,14 @@ function SnapshotsPageContent() {
 
   const selectedSnapshot =
     displaySnapshots.find((snapshot) => snapshot.id === selectedSnapshotId) ?? null;
+  const previousSnapshot = useMemo(() => {
+    if (!selectedSnapshot) return null;
+    const selectedIndex = displaySnapshots.findIndex(
+      (snapshot) => snapshot.id === selectedSnapshot.id,
+    );
+    if (selectedIndex < 0) return null;
+    return displaySnapshots[selectedIndex + 1] ?? null;
+  }, [displaySnapshots, selectedSnapshot]);
   const selectedActivity =
     snapshotActivity.find((activity) => `activity:${activity.id}` === selectedActivityId) ?? null;
   const selectedSnapshotAttribution = useMemo(() => {
@@ -1810,6 +755,10 @@ function SnapshotsPageContent() {
     if (!selectedSnapshot?.id?.trim()) return;
     void loadFiles(selectedSnapshot.id, selectedSnapshotWorkerId || undefined);
   }, [selectedSnapshot, selectedSnapshotWorkerId, loadFiles]);
+
+  useEffect(() => {
+    setDiffSummary(null);
+  }, [selectedSnapshotId, selectedRepositoryId]);
 
   const fileTree = useMemo<FileTreeNode[]>(() => {
     // Use a persistent lookup map keyed by full path so children accumulate correctly
@@ -1859,9 +808,7 @@ function SnapshotsPageContent() {
     }
 
     // Root nodes are those whose path has no "/" (single segment)
-    const roots = Array.from(nodeByPath.values()).filter(
-      (node) => !node.path.includes("/"),
-    );
+    const roots = Array.from(nodeByPath.values()).filter((node) => !node.path.includes("/"));
 
     const sortTree = (nodes: FileTreeNode[]) => {
       nodes.sort((a, b) => {
@@ -1885,16 +832,13 @@ function SnapshotsPageContent() {
 
     setIsRunningRepositoryCheck(true);
     try {
-      await apiFetchJson(
-        `${API_BASE}/rustic/repositories/${selectedRepositoryId}/check`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            workerId: selectedSnapshotWorkerId || undefined,
-          }),
-          retries: 1,
-        },
-      );
+      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/check`, {
+        method: "POST",
+        body: JSON.stringify({
+          workerId: selectedSnapshotWorkerId || undefined,
+        }),
+        retries: 1,
+      });
 
       toast.success("Repository check completed.");
     } catch (error) {
@@ -1912,16 +856,13 @@ function SnapshotsPageContent() {
 
     setIsRunningRepositoryRepairIndex(true);
     try {
-      await apiFetchJson(
-        `${API_BASE}/rustic/repositories/${selectedRepositoryId}/repair-index`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            workerId: selectedSnapshotWorkerId || undefined,
-          }),
-          retries: 1,
-        },
-      );
+      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/repair-index`, {
+        method: "POST",
+        body: JSON.stringify({
+          workerId: selectedSnapshotWorkerId || undefined,
+        }),
+        retries: 1,
+      });
 
       toast.success("Repository index repair completed.");
       if (selectedSnapshotId) {
@@ -1935,6 +876,86 @@ function SnapshotsPageContent() {
   }, [loadFiles, selectedRepositoryId, selectedSnapshotId, selectedSnapshotWorkerId]);
 
   // ── Actions ────────────────────────────────────────────────────────────────
+
+  async function runSnapshotDiffWithPrevious() {
+    if (!selectedRepositoryId || !selectedSnapshot || !previousSnapshot) {
+      toast.error("Need two snapshots to diff.");
+      return;
+    }
+
+    setIsDiffingSnapshot(true);
+    try {
+      const result = await apiFetchJson<{
+        summary: { added: number; removed: number; changed: number };
+      }>(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/snapshot/diff`, {
+        method: "POST",
+        body: JSON.stringify({
+          fromSnapshot: previousSnapshot.id,
+          toSnapshot: selectedSnapshot.id,
+          workerId: selectedSnapshotWorkerId || undefined,
+        }),
+        retries: 1,
+      });
+      setDiffSummary(result.summary);
+      toast.success("Snapshot diff completed.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not diff snapshots.");
+    } finally {
+      setIsDiffingSnapshot(false);
+    }
+  }
+
+  async function restoreSelectedSnapshot(target: string) {
+    if (!selectedRepositoryId || !selectedSnapshot) {
+      toast.error("Select a snapshot first.");
+      return;
+    }
+    if (!target.trim()) {
+      toast.error("Restore target is required.");
+      return;
+    }
+
+    setIsRestoringSnapshot(true);
+    try {
+      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/restore`, {
+        method: "POST",
+        body: JSON.stringify({
+          snapshot: selectedSnapshot.id,
+          target,
+          workerId: selectedSnapshotWorkerId || undefined,
+        }),
+        retries: 1,
+      });
+      toast.success("Restore completed.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not restore snapshot.");
+    } finally {
+      setIsRestoringSnapshot(false);
+    }
+  }
+
+  const fetchDirs = useCallback(
+    async (path: string): Promise<string[]> => {
+      if (!selectedRepositoryId) return [];
+      try {
+        const data = await apiFetchJson<{ dirs?: string[] }>(
+          `${API_BASE}/rustic/repositories/${selectedRepositoryId}/ls-dirs`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              path,
+              workerId: selectedSnapshotWorkerId || undefined,
+            }),
+            retries: 0,
+          },
+        );
+        return data.dirs ?? [];
+      } catch {
+        return [];
+      }
+    },
+    [selectedRepositoryId, selectedSnapshotWorkerId],
+  );
 
   async function triggerBackupNow() {
     if (!selectedRepositoryId) {
@@ -1962,32 +983,25 @@ function SnapshotsPageContent() {
 
     setIsTriggeringBackup(true);
     try {
-      await apiFetchJson(
-        `${API_BASE}/rustic/repositories/${selectedRepositoryId}/backup`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            workerId: manualWorkerId,
-            paths,
-            tags,
-            dryRun: backupDryRun,
-          }),
-          retries: 1,
-        },
-      );
+      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/backup`, {
+        method: "POST",
+        body: JSON.stringify({
+          workerId: manualWorkerId,
+          paths,
+          tags,
+          dryRun: backupDryRun,
+        }),
+        retries: 1,
+      });
 
-      toast.success(
-        backupDryRun ? "Dry-run snapshot started." : "Snapshot started.",
-      );
+      toast.success(backupDryRun ? "Dry-run snapshot started." : "Snapshot started.");
       await Promise.all([
         loadSnapshots(selectedRepositoryId),
         loadSnapshotAttribution(selectedRepositoryId),
         loadSnapshotActivity(selectedRepositoryId),
       ]);
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : "Could not trigger snapshot.",
-      );
+      toast.error(error instanceof Error ? error.message : "Could not trigger snapshot.");
     } finally {
       setIsTriggeringBackup(false);
     }
@@ -1997,9 +1011,7 @@ function SnapshotsPageContent() {
 
   function renderSnapshotRow(item: SnapshotListItem) {
     const isSelected =
-      item.kind === "snapshot"
-        ? item.id === selectedSnapshotId
-        : item.id === selectedActivityId;
+      item.kind === "snapshot" ? item.id === selectedSnapshotId : item.id === selectedActivityId;
     return (
       <button
         key={item.id}
@@ -2033,9 +1045,7 @@ function SnapshotsPageContent() {
             {item.workerSummary}
           </Badge>
         ) : null}
-        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">
-          [{item.meta}]
-        </span>
+        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">[{item.meta}]</span>
       </button>
     );
   }
@@ -2046,9 +1056,7 @@ function SnapshotsPageContent() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-semibold tracking-tight">Recovery Points</h1>
-        <p className="text-sm text-muted-foreground">
-          Browse and manage recovery points.
-        </p>
+        <p className="text-sm text-muted-foreground">Browse and manage recovery points.</p>
       </div>
 
       {/* Repository selector + backup trigger */}
@@ -2059,17 +1067,11 @@ function SnapshotsPageContent() {
               <Label className="mb-1.5 text-xs">Repository</Label>
               <Select
                 value={selectedRepositoryId}
-                onValueChange={(value) =>
-                  setSelectedRepositoryId(value ?? "")
-                }
+                onValueChange={(value) => setSelectedRepositoryId(value ?? "")}
               >
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue
-                    placeholder={
-                      isLoading
-                        ? "Loading repositories..."
-                        : "Choose repository"
-                    }
+                    placeholder={isLoading ? "Loading repositories..." : "Choose repository"}
                   />
                 </SelectTrigger>
                 <SelectPopup>
@@ -2112,9 +1114,7 @@ function SnapshotsPageContent() {
                 <Textarea
                   className="min-h-20 font-mono text-xs"
                   value={backupPathsInput}
-                  onChange={(event) =>
-                    setBackupPathsInput(event.target.value)
-                  }
+                  onChange={(event) => setBackupPathsInput(event.target.value)}
                 />
               </div>
               <div className="space-y-1.5">
@@ -2140,15 +1140,11 @@ function SnapshotsPageContent() {
                 <Input
                   className="h-8 text-xs"
                   value={backupTagsInput}
-                  onChange={(event) =>
-                    setBackupTagsInput(event.target.value)
-                  }
+                  onChange={(event) => setBackupTagsInput(event.target.value)}
                   placeholder="manual, on-demand"
                 />
                 <div className="flex items-center justify-between rounded border px-2 py-1">
-                  <span className="text-[11px] text-muted-foreground">
-                    Dry run
-                  </span>
+                  <span className="text-[11px] text-muted-foreground">Dry run</span>
                   <Switch
                     checked={backupDryRun}
                     onCheckedChange={(checked) => {
@@ -2240,7 +1236,8 @@ function SnapshotsPageContent() {
                     </div>
                   ) : (
                     <div className="mt-1 text-[11px] text-muted-foreground">
-                      Next run: {activity.nextRunAt ? new Date(activity.nextRunAt).toLocaleString() : "—"}
+                      Next run:{" "}
+                      {activity.nextRunAt ? new Date(activity.nextRunAt).toLocaleString() : "—"}
                     </div>
                   )}
                 </div>
@@ -2251,32 +1248,20 @@ function SnapshotsPageContent() {
       </div>
 
       {/* Split-panel explorer */}
-      <div className="flex items-stretch overflow-hidden rounded-lg border bg-card" style={{ height: "calc(100vh - 300px)", minHeight: "500px" }}>
+      <div
+        className="flex items-stretch overflow-hidden rounded-lg border bg-card"
+        style={{ height: "calc(100vh - 300px)", minHeight: "500px" }}
+      >
         {/* ── Left panel: snapshot tree ── */}
         <div className="flex h-full w-130 shrink-0 flex-col border-r">
-          {/* Tabs */}
+          {/* Filter */}
           <div className="border-b px-3 py-3">
-            <div className="flex flex- gap-2">
-              <Tabs
-                value={viewMode}
-                onValueChange={(v) => setViewMode(v as "tree" | "list")}
-              >
-                <TabsList className="h-7 p-0.5">
-                  <TabsTrigger value="tree" className="px-3 text-xs">
-                    Tree View
-                  </TabsTrigger>
-                  <TabsTrigger value="list" className="px-3 text-xs">
-                    List View
-                  </TabsTrigger>
-                </TabsList>
-              </Tabs>
-              <DataTableFilter
-                columns={snapshotWorkerFilterColumns}
-                filters={activeSnapshotWorkerFilters}
-                actions={snapshotWorkerFilterActions}
-                strategy={snapshotWorkerFilterStrategy}
-              />
-            </div>
+            <DataTableFilter
+              columns={snapshotWorkerFilterColumns}
+              filters={activeSnapshotWorkerFilters}
+              actions={snapshotWorkerFilterActions}
+              strategy={snapshotWorkerFilterStrategy}
+            />
           </div>
 
           {/* Snapshot list */}
@@ -2296,18 +1281,11 @@ function SnapshotsPageContent() {
               <p className="py-8 text-center text-xs text-muted-foreground">
                 No recovery points yet. Trigger Snapshot to create the first recovery point.
               </p>
-            ) : viewMode === "list" ? (
-              <div className="space-y-0.5">
-                {snapshotListItems.map((item) => renderSnapshotRow(item))}
-              </div>
             ) : (
               <div className="space-y-1">
                 {treeData.map((monthNode) => {
                   const monthOpen = openMonths[monthNode.month] ?? true;
-                  const totalItems = monthNode.days.reduce(
-                    (sum, d) => sum + d.items.length,
-                    0,
-                  );
+                  const totalItems = monthNode.days.reduce((sum, d) => sum + d.items.length, 0);
                   return (
                     <div key={monthNode.month}>
                       <button
@@ -2332,8 +1310,7 @@ function SnapshotsPageContent() {
                       {monthOpen && (
                         <div className="ml-3 mt-0.5 space-y-0.5">
                           {monthNode.days.map((dayNode) => {
-                            const dayOpen =
-                              openDays[dayNode.day] ?? true;
+                            const dayOpen = openDays[dayNode.day] ?? true;
                             return (
                               <div key={dayNode.day}>
                                 <button
@@ -2356,9 +1333,7 @@ function SnapshotsPageContent() {
                                 </button>
                                 {dayOpen && (
                                   <div className="ml-4 mt-0.5 space-y-0.5">
-                                    {dayNode.items.map((item) =>
-                                      renderSnapshotRow(item),
-                                    )}
+                                    {dayNode.items.map((item) => renderSnapshotRow(item))}
                                   </div>
                                 )}
                               </div>
@@ -2379,7 +1354,11 @@ function SnapshotsPageContent() {
           {selectedSnapshot ? (
             <SnapshotDetailPanel
               snapshot={selectedSnapshot}
-              workers={selectedSnapshotAttribution?.workers ?? []}
+              workers={
+                selectedSnapshotAttribution && selectedSnapshotAttribution.workers.length > 0
+                  ? selectedSnapshotAttribution.workers
+                  : (selectedRepository?.backupWorkers ?? [])
+              }
               runSummary={
                 selectedSnapshotAttribution && selectedSnapshotAttribution.runCount > 0
                   ? {
@@ -2398,6 +1377,12 @@ function SnapshotsPageContent() {
               onRunRepositoryRepairIndex={runRepositoryRepairIndex}
               openFileNodes={openFileNodes}
               setOpenFileNodes={setOpenFileNodes}
+              diffSummary={diffSummary}
+              isDiffing={isDiffingSnapshot}
+              onDiffWithPrevious={previousSnapshot ? runSnapshotDiffWithPrevious : undefined}
+              onRestore={restoreSelectedSnapshot}
+              isRestoring={isRestoringSnapshot}
+              onFetchDirs={fetchDirs}
               onForget={async (snapshotId) => {
                 if (!selectedRepositoryId) return;
                 try {
@@ -2416,7 +1401,9 @@ function SnapshotsPageContent() {
                   void loadSnapshots(selectedRepositoryId);
                   void loadSnapshotAttribution(selectedRepositoryId);
                 } catch (error) {
-                  toast.error(error instanceof Error ? error.message : "Could not forget snapshot.");
+                  toast.error(
+                    error instanceof Error ? error.message : "Could not forget snapshot.",
+                  );
                 }
               }}
             />

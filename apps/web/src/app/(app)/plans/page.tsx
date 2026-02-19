@@ -1,19 +1,29 @@
 "use client";
 
-import { RiAddLine, RiArrowDownSLine, RiCalendarScheduleLine, RiLoader4Line } from "@remixicon/react";
+import {
+  RiAddLine,
+  RiArrowDownSLine,
+  RiCalendarScheduleLine,
+  RiCheckboxCircleLine,
+  RiCloseCircleLine,
+  RiFileListLine,
+  RiLoader4Line,
+} from "@remixicon/react";
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { toast } from "@/lib/toast";
 
-import { ActionMenu, ControlPlaneEmptyState, KpiStat, SectionHeader, StatusBadge } from "@/components/control-plane";
+import {
+  ActionMenu,
+  ControlPlaneEmptyState,
+  KpiStat,
+  SectionHeader,
+  StatusBadge,
+} from "@/components/control-plane";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from "@/components/ui/collapsible";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
   Dialog,
   DialogClose,
@@ -163,7 +173,9 @@ function parsePathScript(
   script: string,
   availableWorkers: WorkerRecord[],
   selectedWorkerIds: string[],
-): { ok: true; value: { paths: string[]; workerPathRules: Record<string, string[]> } } | { ok: false; error: string } {
+):
+  | { ok: true; value: { paths: string[]; workerPathRules: Record<string, string[]> } }
+  | { ok: false; error: string } {
   const selectedWorkerSet = new Set(selectedWorkerIds);
   const workerBySelector = new Map<string, WorkerRecord>();
   for (const worker of availableWorkers) {
@@ -187,7 +199,10 @@ function parsePathScript(
       const selector = line.slice(1, separatorIndex).trim().toLowerCase();
       const targetWorker = workerBySelector.get(selector);
       if (!targetWorker) {
-        return { ok: false, error: `Unknown worker on line ${index + 1}: ${line.slice(1, separatorIndex).trim()}` };
+        return {
+          ok: false,
+          error: `Unknown worker on line ${index + 1}: ${line.slice(1, separatorIndex).trim()}`,
+        };
       }
       if (!selectedWorkerSet.has(targetWorker.id)) {
         return { ok: false, error: `Worker on line ${index + 1} is not selected in Workers` };
@@ -217,9 +232,13 @@ function parsePathScript(
     return { ok: false, error: "At least one backup path is required" };
   }
   if (paths.length === 0) {
-    const missingWorkerPath = selectedWorkerIds.find((workerId) => !workerPathRules[workerId]?.length);
+    const missingWorkerPath = selectedWorkerIds.find(
+      (workerId) => !workerPathRules[workerId]?.length,
+    );
     if (missingWorkerPath) {
-      const workerName = availableWorkers.find((worker) => worker.id === missingWorkerPath)?.name ?? missingWorkerPath;
+      const workerName =
+        availableWorkers.find((worker) => worker.id === missingWorkerPath)?.name ??
+        missingWorkerPath;
       return {
         ok: false,
         error: `No path rule provided for selected worker "${workerName}"`,
@@ -315,6 +334,7 @@ export default function BackupPlansPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createForm, setCreateForm] = useState<PlanFormState>(defaultForm);
   const [runningPlanId, setRunningPlanId] = useState("");
+  const [selectedPlanIds, setSelectedPlanIds] = useState<string[]>([]);
 
   const [editingId, setEditingId] = useState("");
   const [editForm, setEditForm] = useState<PlanFormState>(defaultForm);
@@ -365,7 +385,8 @@ export default function BackupPlansPage() {
     setCreateForm((current) => ({
       ...current,
       repositoryId: current.repositoryId || repository.id,
-      workerIds: current.workerIds.length > 0 ? current.workerIds : [repository.backupWorkers[0]!.id],
+      workerIds:
+        current.workerIds.length > 0 ? current.workerIds : [repository.backupWorkers[0]!.id],
     }));
   }, [isCreateOpen, repositories, createForm.repositoryId, createForm.workerIds]);
 
@@ -385,22 +406,25 @@ export default function BackupPlansPage() {
 
     setIsSaving(true);
     try {
-      const data = await apiFetchJson<{ plan?: BackupPlan }>(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans`, {
-        method: "POST",
-        body: JSON.stringify({
-          name: createForm.name.trim(),
-          repositoryId: createForm.repositoryId,
-          workerIds: createForm.workerIds,
-          cron: createForm.cron.trim(),
-          paths: parsedPathScript.value.paths,
-          workerPathRules: parsedPathScript.value.workerPathRules,
-          tags: parseTags(createForm.tagsInput),
-          dryRun: createForm.dryRun,
-          enabled: createForm.enabled,
-          ...retentionPayload(createForm),
-        }),
-        retries: 1,
-      });
+      const data = await apiFetchJson<{ plan?: BackupPlan }>(
+        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            name: createForm.name.trim(),
+            repositoryId: createForm.repositoryId,
+            workerIds: createForm.workerIds,
+            cron: createForm.cron.trim(),
+            paths: parsedPathScript.value.paths,
+            workerPathRules: parsedPathScript.value.workerPathRules,
+            tags: parseTags(createForm.tagsInput),
+            dryRun: createForm.dryRun,
+            enabled: createForm.enabled,
+            ...retentionPayload(createForm),
+          }),
+          retries: 1,
+        },
+      );
       if (data.plan) setPlans((current) => [data.plan!, ...current]);
 
       setIsCreateOpen(false);
@@ -438,24 +462,26 @@ export default function BackupPlansPage() {
       const data = await apiFetchJson<{ plan?: BackupPlan }>(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${editingId}`,
         {
-        method: "PATCH",
-        body: JSON.stringify({
-          name: editForm.name.trim(),
-          repositoryId: editForm.repositoryId,
-          workerIds: editForm.workerIds,
-          cron: editForm.cron.trim(),
-          paths: parsedPathScript.value.paths,
-          workerPathRules: parsedPathScript.value.workerPathRules,
-          tags: parseTags(editForm.tagsInput),
-          dryRun: editForm.dryRun,
-          enabled: editForm.enabled,
-          ...retentionPayload(editForm),
-        }),
-        retries: 1,
-      },
+          method: "PATCH",
+          body: JSON.stringify({
+            name: editForm.name.trim(),
+            repositoryId: editForm.repositoryId,
+            workerIds: editForm.workerIds,
+            cron: editForm.cron.trim(),
+            paths: parsedPathScript.value.paths,
+            workerPathRules: parsedPathScript.value.workerPathRules,
+            tags: parseTags(editForm.tagsInput),
+            dryRun: editForm.dryRun,
+            enabled: editForm.enabled,
+            ...retentionPayload(editForm),
+          }),
+          retries: 1,
+        },
       );
       if (data.plan) {
-        setPlans((current) => current.map((plan) => (plan.id === data.plan!.id ? data.plan! : plan)));
+        setPlans((current) =>
+          current.map((plan) => (plan.id === data.plan!.id ? data.plan! : plan)),
+        );
       }
       setEditingId("");
       toast.success("Backup plan updated.");
@@ -487,13 +513,15 @@ export default function BackupPlansPage() {
       const data = await apiFetchJson<{ plan?: BackupPlan }>(
         `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${plan.id}`,
         {
-        method: "PATCH",
-        body: JSON.stringify({ enabled: !plan.enabled }),
-        retries: 1,
-      },
+          method: "PATCH",
+          body: JSON.stringify({ enabled: !plan.enabled }),
+          retries: 1,
+        },
       );
       if (data.plan) {
-        setPlans((current) => current.map((entry) => (entry.id === data.plan!.id ? data.plan! : entry)));
+        setPlans((current) =>
+          current.map((entry) => (entry.id === data.plan!.id ? data.plan! : entry)),
+        );
       }
     } catch {
       toast.error("Could not toggle plan.");
@@ -513,6 +541,34 @@ export default function BackupPlansPage() {
       toast.error(error instanceof Error ? error.message : "Could not trigger plan.");
     } finally {
       setRunningPlanId("");
+    }
+  }
+
+  async function runBulkAction(action: "trigger" | "pause" | "resume" | "delete") {
+    if (selectedPlanIds.length === 0) {
+      toast.error("Select at least one plan.");
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const result = await apiFetchJson<{
+        ok: number;
+        failed: number;
+        results: Array<{ planId: string; ok: boolean; message: string }>;
+      }>(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/bulk`, {
+        method: "POST",
+        body: JSON.stringify({ action, planIds: selectedPlanIds }),
+        retries: 1,
+      });
+
+      toast.success(`${action}: ${result.ok} succeeded, ${result.failed} failed.`);
+      setSelectedPlanIds([]);
+      await loadData();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Bulk operation failed.");
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -559,12 +615,24 @@ export default function BackupPlansPage() {
       />
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <KpiStat label="Total policies" value={plans.length} />
-        <KpiStat label="Enabled" value={plans.filter((plan) => plan.enabled).length} />
-        <KpiStat label="Failed (last 7d)" value={plans.filter((plan) => plan.lastStatus === "failed").length} />
+        <KpiStat label="Total policies" value={plans.length} icon={RiFileListLine} color="blue" />
+        <KpiStat
+          label="Enabled"
+          value={plans.filter((plan) => plan.enabled).length}
+          icon={RiCheckboxCircleLine}
+          color="green"
+        />
+        <KpiStat
+          label="Failed (last 7d)"
+          value={plans.filter((plan) => plan.lastStatus === "failed").length}
+          icon={RiCloseCircleLine}
+          color="red"
+        />
         <KpiStat
           label="Next run (soonest)"
           value={nextRunSoonest ? formatDate(new Date(nextRunSoonest).toISOString()) : "—"}
+          icon={RiCalendarScheduleLine}
+          color="violet"
         />
       </div>
 
@@ -574,6 +642,40 @@ export default function BackupPlansPage() {
           <CardDescription>
             Scheduler evaluates cadence every 30 seconds and executes due policy runs.
           </CardDescription>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSaving || selectedPlanIds.length === 0}
+              onClick={() => void runBulkAction("trigger")}
+            >
+              Trigger Selected
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSaving || selectedPlanIds.length === 0}
+              onClick={() => void runBulkAction("pause")}
+            >
+              Pause Selected
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={isSaving || selectedPlanIds.length === 0}
+              onClick={() => void runBulkAction("resume")}
+            >
+              Resume Selected
+            </Button>
+            <Button
+              size="sm"
+              variant="destructive"
+              disabled={isSaving || selectedPlanIds.length === 0}
+              onClick={() => void runBulkAction("delete")}
+            >
+              Delete Selected
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-2">
           {isLoading && (
@@ -593,6 +695,16 @@ export default function BackupPlansPage() {
                 key={plan.id}
                 className="group flex items-center gap-3 rounded-lg border px-4 py-3 hover:bg-muted/30"
               >
+                <Checkbox
+                  checked={selectedPlanIds.includes(plan.id)}
+                  onCheckedChange={(checked) =>
+                    setSelectedPlanIds((current) =>
+                      checked
+                        ? Array.from(new Set([...current, plan.id]))
+                        : current.filter((id) => id !== plan.id),
+                    )
+                  }
+                />
                 <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-muted">
                   <RiCalendarScheduleLine className="size-4 text-muted-foreground" />
                 </div>
@@ -618,8 +730,11 @@ export default function BackupPlansPage() {
                     Workers: {plan.workers.map((worker) => worker.name).join(", ") || "None"}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
-                    {countPlanPaths(plan)} paths • Next: {formatDate(plan.nextRunAt)} • Last: {formatDate(plan.lastRunAt)}
-                    {formatRetentionSummary(plan) ? ` • Retention: ${formatRetentionSummary(plan)}` : ""}
+                    {countPlanPaths(plan)} paths • Next: {formatDate(plan.nextRunAt)} • Last:{" "}
+                    {formatDate(plan.lastRunAt)}
+                    {formatRetentionSummary(plan)
+                      ? ` • Retention: ${formatRetentionSummary(plan)}`
+                      : ""}
                   </p>
                   <p className="truncate text-xs text-muted-foreground">
                     Last run duration: {formatDuration(plan.lastDurationMs)}
@@ -641,7 +756,11 @@ export default function BackupPlansPage() {
                       onSelect: () => void togglePlan(plan),
                     },
                     { label: "Edit", onSelect: () => startEdit(plan) },
-                    { label: "Delete", onSelect: () => void removePlan(plan.id), destructive: true },
+                    {
+                      label: "Delete",
+                      onSelect: () => void removePlan(plan.id),
+                      destructive: true,
+                    },
                   ]}
                 />
               </div>

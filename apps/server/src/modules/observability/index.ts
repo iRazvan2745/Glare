@@ -55,7 +55,10 @@ function bucketizeSyncEvents(
     if (pointMs < startMs || pointMs > endMs) {
       continue;
     }
-    const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor((pointMs - startMs) / bucketSize)));
+    const idx = Math.min(
+      bucketCount - 1,
+      Math.max(0, Math.floor((pointMs - startMs) / bucketSize)),
+    );
     const bucket = buckets[idx];
     if (!bucket) {
       continue;
@@ -161,7 +164,8 @@ export const observabilityRoutes = new Elysia()
         offlineWorkers,
         requests24h,
         errors24h,
-        errorRatePercent: requests24h > 0 ? Number(((errors24h / requests24h) * 100).toFixed(2)) : 0,
+        errorRatePercent:
+          requests24h > 0 ? Number(((errors24h / requests24h) * 100).toFixed(2)) : 0,
       },
       incidents: incidents.map((event) => ({
         ...event,
@@ -197,10 +201,7 @@ export const observabilityRoutes = new Elysia()
     const whereExpression = and(...whereClauses);
 
     const [countRows, eventRows] = await Promise.all([
-      db
-        .select({ total: count() })
-        .from(backupEvent)
-        .where(whereExpression),
+      db.select({ total: count() }).from(backupEvent).where(whereExpression),
       db
         .select({
           id: backupEvent.id,

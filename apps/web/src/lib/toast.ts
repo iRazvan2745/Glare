@@ -24,4 +24,3 @@ export const toast = {
   dismiss: sileo.dismiss,
   clear: sileo.clear,
 };
-

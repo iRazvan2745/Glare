@@ -26,8 +26,13 @@ export function ActionMenu({ items }: { items: ActionMenuItem[] }) {
       <DropdownMenuContent align="end" className="w-44">
         {items.map((item, index) => (
           <div key={item.label}>
-            {firstDestructiveIndex > 0 && index === firstDestructiveIndex ? <DropdownMenuSeparator /> : null}
-            <DropdownMenuItem variant={item.destructive ? "destructive" : "default"} onClick={item.onSelect}>
+            {firstDestructiveIndex > 0 && index === firstDestructiveIndex ? (
+              <DropdownMenuSeparator />
+            ) : null}
+            <DropdownMenuItem
+              variant={item.destructive ? "destructive" : "default"}
+              onClick={item.onSelect}
+            >
               {item.label}
             </DropdownMenuItem>
           </div>

@@ -4,13 +4,7 @@ import { CartesianGrid, Line, LineChart, XAxis } from "recharts";
 import { RiArrowDownLine, RiArrowUpLine } from "@remixicon/react";
 import { useMemo } from "react";
 
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   type ChartConfig,
   ChartContainer,
@@ -37,11 +31,11 @@ type TrafficBucket = {
   errorRate: number;
 };
 
-interface DottedMultiLineChartProps {
+interface MultiLineChartProps {
   buckets: TrafficBucket[];
 }
 
-export function DottedMultiLineChart({ buckets }: DottedMultiLineChartProps) {
+export function MultiLineChart({ buckets }: MultiLineChartProps) {
   const chartData = useMemo(() => {
     if (buckets.length === 0) {
       return [
@@ -90,17 +84,11 @@ export function DottedMultiLineChart({ buckets }: DottedMultiLineChartProps) {
             </Badge>
           )}
         </CardTitle>
-        <CardDescription>
-          Last 24h — requests per interval (dashed) vs error rate % (solid)
-        </CardDescription>
+        <CardDescription>Last 24h — requests per interval vs error rate %</CardDescription>
       </CardHeader>
       <CardContent>
         <ChartContainer config={chartConfig} className="h-40 w-full">
-          <LineChart
-            accessibilityLayer
-            data={chartData}
-            margin={{ left: 12, right: 12 }}
-          >
+          <LineChart accessibilityLayer data={chartData} margin={{ left: 12, right: 12 }}>
             <CartesianGrid vertical={false} />
             <XAxis
               dataKey="label"
@@ -109,22 +97,18 @@ export function DottedMultiLineChart({ buckets }: DottedMultiLineChartProps) {
               tickMargin={8}
               interval="preserveStartEnd"
             />
-            <ChartTooltip
-              cursor={false}
-              content={<ChartTooltipContent />}
-            />
+            <ChartTooltip cursor={false} content={<ChartTooltipContent indicator="line" />} />
             <Line
               dataKey="requests"
-              type="linear"
+              type="step"
               stroke="var(--color-requests)"
               strokeWidth={2}
               dot={false}
-              strokeDasharray="4 4"
               isAnimationActive={false}
             />
             <Line
               dataKey="errorRate"
-              type="linear"
+              type="step"
               stroke="var(--color-errorRate)"
               strokeWidth={2}
               dot={false}

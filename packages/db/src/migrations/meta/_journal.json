@@ -183,6 +183,41 @@
       "when": 1771229636927,
       "tag": "0025_happy_stepford_cuckoos",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1771390000000,
+      "tag": "0026_storage_usage_timeseries",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1771393600000,
+      "tag": "0027_insights_labels_audit",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1771327496871,
+      "tag": "0028_parallel_mockingbird",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1740000000000,
+      "tag": "0029_workspace_settings",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "7",
+      "when": 1771434380396,
+      "tag": "0030_nebulous_warbird",
+      "breakpoints": true
     }
   ]
 }

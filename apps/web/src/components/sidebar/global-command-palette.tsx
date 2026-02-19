@@ -1,10 +1,6 @@
 "use client";
 
-import {
-  RiArrowRightUpLine,
-  RiCommandLine,
-  RiSearch2Line,
-} from "@remixicon/react";
+import { RiArrowRightUpLine, RiCommandLine, RiSearch2Line } from "@remixicon/react";
 import { CornerDownLeftIcon, ArrowUpIcon, ArrowDownIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { parseAsBoolean, useQueryState } from "nuqs";
@@ -83,7 +79,8 @@ export function GlobalCommandPalette() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const isMac = navigator.platform.toLowerCase().includes("mac");
-      const isOpenShortcut = (isMac ? event.metaKey : event.ctrlKey) && event.key.toLowerCase() === "k";
+      const isOpenShortcut =
+        (isMac ? event.metaKey : event.ctrlKey) && event.key.toLowerCase() === "k";
 
       if (isOpenShortcut) {
         event.preventDefault();
@@ -108,7 +105,9 @@ export function GlobalCommandPalette() {
           Command palette
         </span>
         <KbdGroup>
-          <Kbd><RiCommandLine className="size-3" /></Kbd>
+          <Kbd>
+            <RiCommandLine className="size-3" />
+          </Kbd>
           <Kbd>K</Kbd>
         </KbdGroup>
       </Button>
@@ -150,13 +149,19 @@ export function GlobalCommandPalette() {
               <div className="flex items-center gap-4">
                 <div className="flex items-center gap-2">
                   <KbdGroup>
-                    <Kbd><ArrowUpIcon /></Kbd>
-                    <Kbd><ArrowDownIcon /></Kbd>
+                    <Kbd>
+                      <ArrowUpIcon />
+                    </Kbd>
+                    <Kbd>
+                      <ArrowDownIcon />
+                    </Kbd>
                   </KbdGroup>
                   <span>Navigate</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Kbd><CornerDownLeftIcon /></Kbd>
+                  <Kbd>
+                    <CornerDownLeftIcon />
+                  </Kbd>
                   <span>Open</span>
                 </div>
               </div>

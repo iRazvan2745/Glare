@@ -1,12 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type {
-  ColumnConfig,
-  DataTableFilterActions,
-  FilterStrategy,
-  FiltersState,
-} from "./types";
+import type { ColumnConfig, DataTableFilterActions, FilterStrategy, FiltersState } from "./types";
 
 export interface UseDataTableFiltersOptions<TData> {
   strategy: FilterStrategy;

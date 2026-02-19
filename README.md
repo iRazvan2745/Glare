@@ -42,6 +42,10 @@ DATABASE_URL=postgresql://postgres:password@localhost:5434/glare
 BETTER_AUTH_SECRET=change-me
 CORS_ORIGIN=http://localhost:3002
 BETTER_AUTH_URL=http://localhost:3000
+# Optional overrides:
+# BETTER_AUTH_BASE_URL=http://localhost:3000
+# WEB_ORIGIN=http://localhost:3002
+# NEXT_PUBLIC_APP_URL=http://localhost:3002
 ```
 
 Create `apps/web/.env.local`:

@@ -6,12 +6,16 @@ import { db } from "@glare/db";
 import { rusticRepositoryBackupWorker } from "@glare/db/schema/repository-backup-workers";
 import { rusticRepository } from "@glare/db/schema/repositories";
 import { worker as workerTable } from "@glare/db/schema/workers";
-import { and, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, isNotNull, lte, sql } from "drizzle-orm";
 import { type } from "arktype";
 import { Elysia, t } from "elysia";
+import { hasRoleAtLeast } from "../../shared/auth/authorization";
 import { getAuthenticatedUser } from "../../shared/auth/session";
 import { logError, logInfo, logWarn } from "../../shared/logger";
 import { sendDiscordNotification } from "../../shared/notifications";
+import { detectBackupSizeAnomaly, recordBackupMetric } from "../../shared/backup-metrics";
+import { recordStorageUsageSample } from "../../shared/storage-usage";
+import { writeAuditLog } from "../../shared/audit-log";
 
 const WORKER_ONLINE_THRESHOLD_MS = 45_000;
 const BACKEND_VALUES = ["local", "s3", "b2", "rest", "webdav", "sftp", "rclone", "other"] as const;
@@ -135,6 +139,7 @@ const rusticEndpointsSchema = t.Object({
     workersStats: t.String(),
     workerStats: t.String(),
     summaryStats: t.String(),
+    storageUsageStats: t.String(),
     repositoriesStats: t.String(),
     listRepositories: t.String(),
     createRepository: t.String(),
@@ -321,9 +326,7 @@ const updateBackupPlanBodySchema = t.Object({
   repositoryId: t.Optional(t.String({ format: "uuid" })),
   workerIds: t.Optional(t.Array(t.String({ format: "uuid" }), { minItems: 1, maxItems: 128 })),
   cron: t.Optional(t.String({ minLength: 1, maxLength: 120 })),
-  paths: t.Optional(
-    t.Array(t.String({ minLength: 1, maxLength: 2048 }), { maxItems: 64 }),
-  ),
+  paths: t.Optional(t.Array(t.String({ minLength: 1, maxLength: 2048 }), { maxItems: 64 })),
   workerPathRules: t.Optional(
     t.Record(
       t.String({ format: "uuid" }),
@@ -560,7 +563,9 @@ function normalizeRcloneRepository(
 }
 
 function hasRcloneOptions(options: Record<string, string>) {
-  return Object.keys(options).some((key) => key === "rclone.type" || key.startsWith("rclone.config."));
+  return Object.keys(options).some(
+    (key) => key === "rclone.type" || key.startsWith("rclone.config."),
+  );
 }
 
 function hasLegacyS3Options(options: Record<string, string>) {
@@ -739,7 +744,9 @@ function parseStringArrayJson(value: string | null): string[] {
   try {
     const parsed = JSON.parse(value) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+    return parsed.filter(
+      (item): item is string => typeof item === "string" && item.trim().length > 0,
+    );
   } catch {
     return [];
   }
@@ -760,7 +767,9 @@ function parsePlanPathsConfig(value: string | null): PlanPathsConfig {
     // Legacy format: simple array of paths shared by all workers.
     if (Array.isArray(parsed)) {
       return {
-        defaultPaths: normalizePaths(parsed.filter((item): item is string => typeof item === "string")),
+        defaultPaths: normalizePaths(
+          parsed.filter((item): item is string => typeof item === "string"),
+        ),
         workerPaths: {},
       };
     }
@@ -771,12 +780,16 @@ function parsePlanPathsConfig(value: string | null): PlanPathsConfig {
 
     const record = parsed as Record<string, unknown>;
     const defaultPaths = Array.isArray(record.defaultPaths)
-      ? normalizePaths(record.defaultPaths.filter((item): item is string => typeof item === "string"))
+      ? normalizePaths(
+          record.defaultPaths.filter((item): item is string => typeof item === "string"),
+        )
       : [];
     const workerPaths: Record<string, string[]> = {};
     const rawWorkerPaths = record.workerPaths;
     if (rawWorkerPaths && typeof rawWorkerPaths === "object" && !Array.isArray(rawWorkerPaths)) {
-      for (const [workerId, workerValue] of Object.entries(rawWorkerPaths as Record<string, unknown>)) {
+      for (const [workerId, workerValue] of Object.entries(
+        rawWorkerPaths as Record<string, unknown>,
+      )) {
         if (!Array.isArray(workerValue)) continue;
         const nextPaths = normalizePaths(
           workerValue.filter((item): item is string => typeof item === "string"),
@@ -817,7 +830,10 @@ function sanitizeWorkerPathRules(
 
   for (const [workerId, rawPaths] of Object.entries(rules)) {
     if (!allowedSet.has(workerId)) {
-      return { ok: false as const, error: `Worker path rule contains unknown worker id: ${workerId}` };
+      return {
+        ok: false as const,
+        error: `Worker path rule contains unknown worker id: ${workerId}`,
+      };
     }
     const paths = normalizePaths(rawPaths);
     if (paths.length === 0) {
@@ -852,12 +868,21 @@ function snapshotShortId(snapshotId: string) {
 }
 
 function parseSnapshotDate(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    // Treat large numbers as ms epoch, smaller as seconds epoch.
+    const epochMs = value > 10_000_000_000 ? value : value * 1000;
+    const parsed = new Date(epochMs);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
   if (typeof value !== "string" || value.trim().length === 0) return null;
   const parsed = new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
-function collectSnapshotRefs(value: unknown, refs: Array<{ snapshotId: string; snapshotTime: Date | null }>) {
+function collectSnapshotRefs(
+  value: unknown,
+  refs: Array<{ snapshotId: string; snapshotTime: Date | null }>,
+) {
   if (Array.isArray(value)) {
     for (const item of value) {
       collectSnapshotRefs(item, refs);
@@ -970,6 +995,54 @@ function extractLatestSnapshotRefFromProxyData(proxyData: unknown) {
   return refs[0]!;
 }
 
+type SnapshotFileEntry = {
+  path: string;
+  kind: "file" | "dir";
+};
+
+function extractSnapshotFileEntries(raw: unknown): SnapshotFileEntry[] {
+  const entries: SnapshotFileEntry[] = [];
+  const seen = new Set<string>();
+  const stack: unknown[] = [raw];
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (!current) continue;
+    if (Array.isArray(current)) {
+      for (const item of current) stack.push(item);
+      continue;
+    }
+    if (typeof current !== "object") continue;
+
+    const record = current as Record<string, unknown>;
+    const path =
+      (typeof record.path === "string" && record.path) ||
+      (typeof record.file === "string" && record.file) ||
+      (typeof record.name === "string" && record.name) ||
+      null;
+    if (path) {
+      const normalized = path.trim().replace(/^\/+/, "");
+      if (normalized.length > 0 && !seen.has(normalized)) {
+        const typeValue = `${record.type ?? record.kind ?? record.node_type ?? ""}`.toLowerCase();
+        const kind: "file" | "dir" =
+          typeValue.includes("dir") || typeValue.includes("tree") || typeValue === "d"
+            ? "dir"
+            : "file";
+        seen.add(normalized);
+        entries.push({ path: normalized, kind });
+      }
+    }
+
+    for (const value of Object.values(record)) {
+      if (value && (Array.isArray(value) || typeof value === "object")) {
+        stack.push(value);
+      }
+    }
+  }
+
+  return entries.sort((a, b) => a.path.localeCompare(b.path));
+}
+
 function extractSnapshotRefFromDetailsJson(detailsJson: string | null) {
   if (!detailsJson) return null;
   try {
@@ -1054,7 +1127,8 @@ function cronMatchesDate(date: Date, parsed: NonNullable<ReturnType<typeof parse
   const month = date.getMonth() + 1;
   const dayOfWeek = date.getDay();
 
-  if (!parsed.minute.has(minute) || !parsed.hour.has(hour) || !parsed.month.has(month)) return false;
+  if (!parsed.minute.has(minute) || !parsed.hour.has(hour) || !parsed.month.has(month))
+    return false;
 
   const domMatch = parsed.dayOfMonth.has(dayOfMonth);
   const dowMatch = parsed.dayOfWeek.has(dayOfWeek);
@@ -1101,7 +1175,9 @@ function mapRepository(
   workerById: Map<string, WorkerPreviewRecord>,
   backupWorkerIdsByRepositoryId: Map<string, string[]>,
 ): RusticRepository {
-  const primaryWorker = record.primaryWorkerId ? (workerById.get(record.primaryWorkerId) ?? null) : null;
+  const primaryWorker = record.primaryWorkerId
+    ? (workerById.get(record.primaryWorkerId) ?? null)
+    : null;
   const initializedAt = record.initializedAt ? record.initializedAt.toISOString() : null;
   const backupWorkers = (backupWorkerIdsByRepositoryId.get(record.id) ?? [])
     .map((id) => workerById.get(id))
@@ -1416,7 +1492,9 @@ async function getRepositoryByIdForUser(userId: string, repositoryId: string) {
     return null;
   }
 
-  const backupWorkerIdsByRepositoryId = await getBackupWorkerIdsByRepositoryIds([repositoryRecord.id]);
+  const backupWorkerIdsByRepositoryId = await getBackupWorkerIdsByRepositoryIds([
+    repositoryRecord.id,
+  ]);
   const workerIds = repositoryRecord.workerId ? [repositoryRecord.workerId] : [];
   workerIds.push(...(backupWorkerIdsByRepositoryId.get(repositoryRecord.id) ?? []));
   const workerById = await getWorkerPreviewByIdsForUser(userId, workerIds);
@@ -1453,7 +1531,9 @@ async function resolveOwnedWorkerIds(userId: string, workerIds: string[]) {
 }
 
 async function replaceBackupWorkers(repositoryId: string, workerIds: string[]) {
-  await db.delete(rusticRepositoryBackupWorker).where(eq(rusticRepositoryBackupWorker.repositoryId, repositoryId));
+  await db
+    .delete(rusticRepositoryBackupWorker)
+    .where(eq(rusticRepositoryBackupWorker.repositoryId, repositoryId));
   if (workerIds.length === 0) {
     return;
   }
@@ -1513,8 +1593,12 @@ async function getBackupPlansForUser(userId: string) {
     getRepositoriesForUser(userId),
   ]);
 
-  const repositoryById = new Map(repositories.map((repository) => [repository.id, repository] as const));
-  const workerIdsByPlanId = await getPlanWorkerIdsByPlanIds(planRecords.map((planRecord) => planRecord.id));
+  const repositoryById = new Map(
+    repositories.map((repository) => [repository.id, repository] as const),
+  );
+  const workerIdsByPlanId = await getPlanWorkerIdsByPlanIds(
+    planRecords.map((planRecord) => planRecord.id),
+  );
   for (const planRecord of planRecords) {
     const existing = workerIdsByPlanId.get(planRecord.id);
     if (!existing || existing.length === 0) {
@@ -1523,10 +1607,7 @@ async function getBackupPlansForUser(userId: string) {
   }
 
   const allPlanWorkerIds = Array.from(workerIdsByPlanId.values()).flat();
-  const workerById = await getWorkerPreviewByIdsForUser(
-    userId,
-    allPlanWorkerIds,
-  );
+  const workerById = await getWorkerPreviewByIdsForUser(userId, allPlanWorkerIds);
   return planRecords
     .map((record) => mapBackupPlan(record, repositoryById, workerById, workerIdsByPlanId))
     .filter((record): record is RusticBackupPlan => record !== null);
@@ -1592,7 +1673,10 @@ async function getBackupEventsForUser(
   return rows.map((row) => mapBackupEvent(row));
 }
 
-async function getRepositorySnapshotWorkerAttributionsForUser(userId: string, repositoryId: string) {
+async function getRepositorySnapshotWorkerAttributionsForUser(
+  userId: string,
+  repositoryId: string,
+) {
   const runs = await db.query.backupPlanRun.findMany({
     where: (table, { and: dbAnd, eq: dbEq }) =>
       dbAnd(
@@ -1841,11 +1925,14 @@ async function getRepositorySnapshotActivityForUser(userId: string, repositoryId
   });
 
   const runningRuns = activeRuns.filter((run) => run.status === "running");
-  const queuedRuns = activeRuns.filter((run) => run.status === "pending");
 
   const activePlanIds = Array.from(new Set(activeRuns.map((run) => run.planId)));
   const activeWorkerIds = Array.from(
-    new Set(activeRuns.map((run) => run.workerId).filter((workerId): workerId is string => Boolean(workerId))),
+    new Set(
+      activeRuns
+        .map((run) => run.workerId)
+        .filter((workerId): workerId is string => Boolean(workerId)),
+    ),
   );
 
   const [activePlans, workerById] = await Promise.all([
@@ -1958,21 +2045,16 @@ async function getRepositorySnapshotActivityForUser(userId: string, repositoryId
       toNumber(details?.filesDone) ??
       toNumber(details?.filesProcessed) ??
       toNumber(details?.processedFiles);
-    const filesTotal =
-      toNumber(details?.filesTotal) ??
-      toNumber(details?.totalFiles);
+    const filesTotal = toNumber(details?.filesTotal) ?? toNumber(details?.totalFiles);
     const bytesDone =
       toNumber(details?.bytesDone) ??
       toNumber(details?.bytesProcessed) ??
       toNumber(details?.processedBytes);
-    const bytesTotal =
-      toNumber(details?.bytesTotal) ??
-      toNumber(details?.totalBytes);
+    const bytesTotal = toNumber(details?.bytesTotal) ?? toNumber(details?.totalBytes);
     const message =
       typeof details?.message === "string"
         ? details.message
-        : latestEvent?.message ||
-          `Running backup${worker?.name ? ` on ${worker.name}` : ""}`;
+        : latestEvent?.message || `Running backup${worker?.name ? ` on ${worker.name}` : ""}`;
 
     return {
       id: `running:${run.id}`,
@@ -1993,42 +2075,6 @@ async function getRepositorySnapshotActivityForUser(userId: string, repositoryId
       filesTotal,
       bytesDone,
       bytesTotal,
-      lastEventAt: latestEvent ? latestEvent.createdAt.toISOString() : null,
-      message,
-    };
-  });
-
-  const queuedActivities = queuedRuns.map((run) => {
-    const plan = activePlanById.get(run.planId) ?? null;
-    const worker = run.workerId ? (workerById.get(run.workerId) ?? null) : null;
-    const latestEvent = latestEventByRunId.get(run.id) ?? null;
-    const details = latestEvent?.details ?? null;
-    const elapsedMs = Math.max(0, now - run.startedAt.getTime());
-    const message =
-      typeof details?.message === "string"
-        ? details.message
-        : latestEvent?.message ||
-          `Backup queued${worker?.name ? ` on ${worker.name}` : ""}`;
-
-    return {
-      id: `queued:${run.id}`,
-      kind: "pending" as const,
-      status: "pending" as const,
-      planId: run.planId,
-      planName: plan?.name ?? null,
-      workerId: run.workerId ?? null,
-      workerName: worker?.name ?? null,
-      startedAt: run.startedAt.toISOString(),
-      nextRunAt: null,
-      elapsedMs,
-      estimatedTotalMs: null,
-      progressPercent: 0,
-      phase: typeof details?.phase === "string" ? details.phase : "queued",
-      currentPath: null,
-      filesDone: null,
-      filesTotal: null,
-      bytesDone: null,
-      bytesTotal: null,
       lastEventAt: latestEvent ? latestEvent.createdAt.toISOString() : null,
       message,
     };
@@ -2077,7 +2123,7 @@ async function getRepositorySnapshotActivityForUser(userId: string, repositoryId
       message: "Scheduled backup pending",
     }));
 
-  return { activities: [...runningActivities, ...queuedActivities, ...pendingActivities] };
+  return { activities: [...runningActivities, ...pendingActivities] };
 }
 
 type ProxyError = { error: string; status: number };
@@ -2143,6 +2189,38 @@ async function getWorkerForProxy(
       id: workerRecord.id,
       endpoint: workerRecord.endpoint,
       syncToken: workerRecord.syncToken,
+    },
+  };
+}
+
+async function getAnyHealthyWorkerForProxy(userId: string): Promise<ProxyError | ProxySuccess> {
+  const onlineThreshold = new Date(Date.now() - WORKER_ONLINE_THRESHOLD_MS);
+
+  const workerRecord = await db.query.worker.findFirst({
+    where: (table, { and: dbAnd, eq: dbEq }) =>
+      dbAnd(
+        dbEq(table.userId, userId),
+        isNotNull(table.endpoint),
+        isNotNull(table.syncToken),
+        gte(table.lastSeenAt, onlineThreshold),
+      ),
+    columns: {
+      id: true,
+      endpoint: true,
+      syncToken: true,
+    },
+  });
+
+  if (!workerRecord) {
+    logWarn("no healthy worker available for proxy", { userId });
+    return { error: "No healthy worker available", status: 502 };
+  }
+
+  return {
+    worker: {
+      id: workerRecord.id,
+      endpoint: workerRecord.endpoint!,
+      syncToken: workerRecord.syncToken!,
     },
   };
 }
@@ -2530,9 +2608,7 @@ async function executePruneForPlan(
     .from(backupPlanWorker)
     .where(eq(backupPlanWorker.planId, plan.id));
   const planWorkerIds =
-    planWorkerRows.length > 0
-      ? planWorkerRows.map((row) => row.workerId)
-      : [plan.workerId];
+    planWorkerRows.length > 0 ? planWorkerRows.map((row) => row.workerId) : [plan.workerId];
   const pruneWorkerId =
     planWorkerIds.find((id) => backupWorkerIds.includes(id)) ?? planWorkerIds[0]!;
 
@@ -2615,7 +2691,13 @@ async function executePruneForPlan(
           : "Prune command failed";
       await db
         .update(backupPlanRun)
-        .set({ status: "failed", error: errorMessage, durationMs, outputJson, finishedAt: new Date() })
+        .set({
+          status: "failed",
+          error: errorMessage,
+          durationMs,
+          outputJson,
+          finishedAt: new Date(),
+        })
         .where(eq(backupPlanRun.id, pruneRunId));
       await createBackupEvent({
         userId: plan.userId,
@@ -2895,12 +2977,55 @@ async function executeBackupPlan(plan: BackupPlanRecord) {
           proxy.data && typeof proxy.data === "object" && "error" in proxy.data
             ? String((proxy.data as { error?: string }).error || "")
             : null;
-        finalError = rusticSuccess ? null : (errorMessage || "Backup command failed");
+        finalError = rusticSuccess ? null : errorMessage || "Backup command failed";
         outputJson = proxy.data ? JSON.stringify(proxy.data) : null;
         if (rusticSuccess) {
           const snapshotRef = extractPrimarySnapshotRefFromProxyData(proxy.data);
           runSnapshotId = snapshotRef?.snapshotId ?? null;
           runSnapshotTime = snapshotRef?.snapshotTime ?? null;
+          await recordStorageUsageSample({
+            userId: plan.userId,
+            repositoryId: repository.id,
+            runId,
+            output: proxy.data,
+          });
+          const metric = await recordBackupMetric({
+            runId,
+            userId: plan.userId,
+            repositoryId: repository.id,
+            planId: plan.id,
+            workerId,
+            snapshotId: runSnapshotId,
+            snapshotTime: runSnapshotTime,
+            output: proxy.data,
+          });
+          if (metric) {
+            const anomaly = await detectBackupSizeAnomaly({
+              metricId: metric.id,
+              userId: plan.userId,
+              planId: plan.id,
+              repositoryId: repository.id,
+              actualBytes: metric.bytesAdded,
+            });
+            if (anomaly) {
+              await createBackupEvent({
+                userId: plan.userId,
+                repositoryId: repository.id,
+                planId: plan.id,
+                runId,
+                workerId,
+                type: "backup_size_anomaly",
+                status: "open",
+                severity: anomaly.severity,
+                message: `Backup size anomaly detected (${anomaly.reason})`,
+                details: {
+                  expectedBytes: anomaly.expectedBytes,
+                  actualBytes: metric.bytesAdded,
+                  score: anomaly.score,
+                },
+              });
+            }
+          }
         }
 
         if (!rusticSuccess) {
@@ -3116,6 +3241,7 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
           workersStats: "/api/workers/rustic/stats",
           workerStats: "/api/workers/:id/rustic/stats",
           summaryStats: "/api/rustic/stats/summary",
+          storageUsageStats: "/api/rustic/stats/storage-usage",
           repositoriesStats: "/api/rustic/stats/repositories",
           listRepositories: "/api/rustic/repositories",
           createRepository: "/api/rustic/repositories",
@@ -3253,6 +3379,147 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
     },
   )
   .get(
+    "/rustic/stats/storage-usage",
+    async ({ request, query, status }) => {
+      const user = await getAuthenticatedUser(request);
+      if (!user) {
+        return status(401, { error: "Unauthorized" });
+      }
+
+      const hoursParam = Number(query?.hours) || 24;
+      const hours = Math.max(1, Math.min(24 * 30, hoursParam));
+      const intervalMinutesParam = Number(query?.intervalMinutes);
+      const intervalMinutes = Number.isFinite(intervalMinutesParam)
+        ? Math.max(1, Math.min(60, Math.floor(intervalMinutesParam)))
+        : null;
+      const bucketsParam = Number(query?.buckets);
+      const defaultBuckets = Math.max(4, hours * 12);
+      const buckets = Number.isFinite(bucketsParam)
+        ? Math.max(4, Math.min(2_880, Math.floor(bucketsParam)))
+        : defaultBuckets;
+      const bucketMs = intervalMinutes
+        ? intervalMinutes * 60_000
+        : Math.max(60_000, Math.floor((hours * 60 * 60 * 1000) / buckets));
+      const rows = await db.$client.query(
+        `
+        WITH event_points AS (
+          SELECT
+            s."repository_id" AS repository_id,
+            s."created_at" AS sample_time,
+            s."bytes_added"::bigint AS raw_bytes,
+            LAG(s."bytes_added"::bigint) OVER (
+              PARTITION BY s."repository_id"
+              ORDER BY s."created_at" ASC
+            ) AS prev_raw_bytes
+          FROM "storage_usage_event" s
+          WHERE s."user_id" = $1
+            AND s."created_at" >= NOW() - INTERVAL '1 hour' * $2
+        ),
+        event_deltas AS (
+          SELECT
+            sample_time,
+            CASE
+              WHEN prev_raw_bytes IS NULL THEN 0::bigint
+              ELSE (raw_bytes - prev_raw_bytes)::bigint
+            END AS bytes_added
+          FROM event_points
+        ),
+        metric_fallback_samples AS (
+          SELECT
+            m."created_at" AS sample_time,
+            m."bytes_added"::bigint AS bytes_added
+          FROM "backup_run_metric" m
+          WHERE m."user_id" = $1
+            AND m."created_at" >= NOW() - INTERVAL '1 hour' * $2
+            AND NOT EXISTS (
+              SELECT 1
+              FROM "storage_usage_event" s
+              WHERE s."run_id" = m."run_id"
+                AND s."user_id" = m."user_id"
+            )
+        )
+        SELECT
+          sample_time,
+          bytes_added
+        FROM event_deltas
+        UNION ALL
+        SELECT
+          sample_time,
+          bytes_added
+        FROM metric_fallback_samples
+        ORDER BY sample_time ASC
+        `,
+        [user.id, hours],
+      );
+
+      const allSamples: Array<{ snapshotTimeMs: number; bytesAdded: number }> = [];
+      for (const row of rows.rows as Array<{
+        sample_time: string | Date;
+        bytes_added: string | number;
+      }>) {
+        const snapshotTimeMs = new Date(row.sample_time).getTime();
+        const bytesAdded = Number(row.bytes_added);
+        if (!Number.isFinite(snapshotTimeMs) || !Number.isFinite(bytesAdded)) {
+          continue;
+        }
+        const normalizedBytesAdded = Math.trunc(bytesAdded);
+        if (normalizedBytesAdded === 0) {
+          continue;
+        }
+        allSamples.push({
+          snapshotTimeMs,
+          bytesAdded: normalizedBytesAdded,
+        });
+      }
+
+      const bucketMap = new Map<number, number>();
+      for (const sample of allSamples) {
+        const bucketKey = Math.floor(sample.snapshotTimeMs / bucketMs) * bucketMs;
+        bucketMap.set(bucketKey, (bucketMap.get(bucketKey) ?? 0) + sample.bytesAdded);
+      }
+
+      const sortedBuckets = Array.from(bucketMap.entries()).sort((a, b) => a[0] - b[0]);
+      let runningTotal = 0;
+      const result = sortedBuckets.map(([bucketMsEpoch, bytesAdded]) => {
+        runningTotal += bytesAdded;
+        return {
+          bucket: new Date(bucketMsEpoch).toISOString(),
+          bytesAdded: String(bytesAdded),
+          totalBytes: String(runningTotal),
+        };
+      });
+
+      return {
+        source: "backup_run_metric+storage_usage_event",
+        buckets: result,
+      };
+    },
+    {
+      query: t.Object({
+        hours: t.Optional(t.Numeric()),
+        buckets: t.Optional(t.Numeric()),
+        intervalMinutes: t.Optional(t.Numeric()),
+      }),
+      response: {
+        200: t.Object({
+          source: t.String(),
+          buckets: t.Array(
+            t.Object({
+              bucket: t.String(),
+              bytesAdded: t.String(),
+              totalBytes: t.String(),
+            }),
+          ),
+        }),
+        401: errorResponseSchema,
+      },
+      detail: {
+        tags: ["Rustic"],
+        summary: "Get worker-sourced storage usage buckets",
+      },
+    },
+  )
+  .get(
     "/rustic/stats/repositories",
     async ({ request, status }) => {
       const user = await getAuthenticatedUser(request);
@@ -3323,7 +3590,9 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
             : (body.backupWorkerIds ?? []);
 
         if (requestedPrimaryWorkerId) {
-          const [resolvedPrimaryWorkerId] = await resolveOwnedWorkerIds(user.id, [requestedPrimaryWorkerId]);
+          const [resolvedPrimaryWorkerId] = await resolveOwnedWorkerIds(user.id, [
+            requestedPrimaryWorkerId,
+          ]);
           primaryWorkerId = resolvedPrimaryWorkerId ?? null;
         }
         backupWorkerIds = await resolveOwnedWorkerIds(user.id, requestedBackupWorkerIds);
@@ -3343,7 +3612,7 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
             ? body.repository?.trim()
               ? normalizeRcloneRepository(body.repository, repositoryId, options)
               : null
-          : body.repository?.trim() || null;
+            : body.repository?.trim() || null;
 
       if (!repositoryPath) {
         return status(400, {
@@ -3464,7 +3733,9 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
           primaryWorkerIdToPersist = null;
         } else {
           try {
-            const [resolvedPrimaryWorkerId] = await resolveOwnedWorkerIds(user.id, [requestedPrimaryWorkerId]);
+            const [resolvedPrimaryWorkerId] = await resolveOwnedWorkerIds(user.id, [
+              requestedPrimaryWorkerId,
+            ]);
             primaryWorkerIdToPersist = resolvedPrimaryWorkerId ?? null;
           } catch (error) {
             const message = error instanceof Error ? error.message : "Worker validation failed";
@@ -3481,11 +3752,12 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
           ? body.s3
             ? buildS3RepositoryPath(body.s3)
             : body.repository?.trim() || existing.repository
-          : body.backend === "rclone" || (body.backend === undefined && existing.backend === "rclone")
+          : body.backend === "rclone" ||
+              (body.backend === undefined && existing.backend === "rclone")
             ? body.repository?.trim()
               ? normalizeRcloneRepository(body.repository, existing.id, mergedOptions)
               : existing.repository
-          : body.repository?.trim();
+            : body.repository?.trim();
 
       const nextBackend = body.backend ?? existing.backend;
       const nextRepository = repositoryPath ?? existing.repository;
@@ -3529,7 +3801,10 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
             : undefined;
       if (requestedBackupWorkerIds !== undefined) {
         try {
-          const resolvedBackupWorkerIds = await resolveOwnedWorkerIds(user.id, requestedBackupWorkerIds);
+          const resolvedBackupWorkerIds = await resolveOwnedWorkerIds(
+            user.id,
+            requestedBackupWorkerIds,
+          );
           await replaceBackupWorkers(existing.id, resolvedBackupWorkerIds);
         } catch (error) {
           const message = error instanceof Error ? error.message : "Worker validation failed";
@@ -3659,10 +3934,15 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
           : rawOptions;
       const shouldForceRcloneInit =
         repositoryRecord.backend === "rclone" ||
-        (repositoryRecord.backend === "s3" && (hasRcloneOptions(initOptions) || hasLegacyS3Options(initOptions)));
+        (repositoryRecord.backend === "s3" &&
+          (hasRcloneOptions(initOptions) || hasLegacyS3Options(initOptions)));
       const initBackend = shouldForceRcloneInit ? "rclone" : repositoryRecord.backend;
       const initRepository = shouldForceRcloneInit
-        ? deriveRcloneRepositoryForInit(repositoryRecord.repository, repositoryRecord.id, initOptions)
+        ? deriveRcloneRepositoryForInit(
+            repositoryRecord.repository,
+            repositoryRecord.id,
+            initOptions,
+          )
         : repositoryRecord.repository;
 
       if (shouldForceRcloneInit && repositoryRecord.backend !== "rclone") {
@@ -4153,6 +4433,163 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
     },
   )
   .post(
+    "/rustic/repositories/:id/snapshot/diff",
+    async ({ request, params, body, status }) => {
+      const user = await getAuthenticatedUser(request);
+      if (!user) {
+        return status(401, { error: "Unauthorized" });
+      }
+
+      const parsedRepositoryId = repositoryIdSchema.safeParse(params.id);
+      if (!parsedRepositoryId.success) {
+        return status(400, { error: "Invalid repository id" });
+      }
+
+      const repositoryRecord = await db.query.rusticRepository.findFirst({
+        where: (table, { and: dbAnd, eq: dbEq }) =>
+          dbAnd(dbEq(table.id, parsedRepositoryId.data), dbEq(table.userId, user.id)),
+        columns: {
+          id: true,
+          workerId: true,
+          repository: true,
+          password: true,
+          backend: true,
+          optionsJson: true,
+        },
+      });
+      if (!repositoryRecord) {
+        return status(404, { error: "Repository not found" });
+      }
+      if (!repositoryRecord.workerId) {
+        return status(400, { error: "Repository is not attached to a worker" });
+      }
+
+      const backupWorkerIds = await getBackupWorkerIdsForRepository(repositoryRecord.id);
+      const selectedWorkerId = body.workerId ?? repositoryRecord.workerId;
+      const validWorkerIds = Array.from(new Set([repositoryRecord.workerId, ...backupWorkerIds]));
+      if (!validWorkerIds.includes(selectedWorkerId)) {
+        return status(400, { error: "Selected worker is not attached to this repository" });
+      }
+
+      const result = await getWorkerForProxy(user.id, selectedWorkerId);
+      if ("error" in result) {
+        return status(502, { error: result.error });
+      }
+
+      try {
+        const rawOptions = parseOptionsJson(repositoryRecord.optionsJson);
+        const snapshotOptions = hasRcloneOptions(rawOptions)
+          ? rawOptions
+          : repositoryRecord.backend === "s3" && hasLegacyS3Options(rawOptions)
+            ? enrichRcloneOptionsFromS3(rawOptions)
+            : rawOptions;
+        const shouldForceRcloneSnapshots =
+          repositoryRecord.backend === "rclone" ||
+          (repositoryRecord.backend === "s3" &&
+            (hasRcloneOptions(snapshotOptions) || hasLegacyS3Options(snapshotOptions)));
+        const snapshotRepository = shouldForceRcloneSnapshots
+          ? deriveRcloneRepositoryForInit(
+              repositoryRecord.repository,
+              repositoryRecord.id,
+              snapshotOptions,
+            )
+          : repositoryRecord.repository;
+
+        const [left, right] = await Promise.all([
+          proxyToWorker(
+            result.worker.endpoint,
+            result.worker.syncToken,
+            "/rustic/snapshot/files",
+            "POST",
+            {
+              repository: snapshotRepository,
+              password: repositoryRecord.password ?? undefined,
+              snapshot: body.fromSnapshot,
+              path: body.path,
+              backend: shouldForceRcloneSnapshots ? "rclone" : repositoryRecord.backend,
+              options: shouldForceRcloneSnapshots ? snapshotOptions : undefined,
+            },
+          ),
+          proxyToWorker(
+            result.worker.endpoint,
+            result.worker.syncToken,
+            "/rustic/snapshot/files",
+            "POST",
+            {
+              repository: snapshotRepository,
+              password: repositoryRecord.password ?? undefined,
+              snapshot: body.toSnapshot,
+              path: body.path,
+              backend: shouldForceRcloneSnapshots ? "rclone" : repositoryRecord.backend,
+              options: shouldForceRcloneSnapshots ? snapshotOptions : undefined,
+            },
+          ),
+        ]);
+
+        if (left.status < 200 || left.status >= 300) {
+          return status(left.status as 400, left.data as { error?: string });
+        }
+        if (right.status < 200 || right.status >= 300) {
+          return status(right.status as 400, right.data as { error?: string });
+        }
+
+        const leftEntries = extractSnapshotFileEntries(left.data);
+        const rightEntries = extractSnapshotFileEntries(right.data);
+        const leftMap = new Map(leftEntries.map((entry) => [entry.path, entry.kind]));
+        const rightMap = new Map(rightEntries.map((entry) => [entry.path, entry.kind]));
+
+        const added: string[] = [];
+        const removed: string[] = [];
+        const changed: string[] = [];
+
+        for (const [path, kind] of rightMap) {
+          if (!leftMap.has(path)) {
+            added.push(path);
+            continue;
+          }
+          const leftKind = leftMap.get(path);
+          if (leftKind !== kind) {
+            changed.push(path);
+          }
+        }
+        for (const [path] of leftMap) {
+          if (!rightMap.has(path)) {
+            removed.push(path);
+          }
+        }
+
+        return {
+          fromSnapshot: body.fromSnapshot,
+          toSnapshot: body.toSnapshot,
+          path: body.path ?? null,
+          summary: {
+            added: added.length,
+            removed: removed.length,
+            changed: changed.length,
+          },
+          added,
+          removed,
+          changed,
+        };
+      } catch {
+        return status(502, { error: "Failed to reach worker" });
+      }
+    },
+    {
+      params: t.Object({ id: t.String({ format: "uuid" }) }),
+      body: t.Object({
+        fromSnapshot: t.String({ minLength: 1, maxLength: 512 }),
+        toSnapshot: t.String({ minLength: 1, maxLength: 512 }),
+        path: t.Optional(t.String({ maxLength: 1024 })),
+        workerId: t.Optional(t.String({ format: "uuid" })),
+      }),
+      detail: {
+        tags: ["Rustic"],
+        summary: "Diff files between two snapshots",
+      },
+    },
+  )
+  .post(
     "/rustic/repositories/:id/check",
     async ({ request, params, body, status }) => {
       const user = await getAuthenticatedUser(request);
@@ -4484,6 +4921,21 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
                 source: "manual",
               },
             });
+            await recordStorageUsageSample({
+              userId: user.id,
+              repositoryId: repositoryRecord.id,
+              output: proxy.data,
+            });
+            await recordBackupMetric({
+              runId: crypto.randomUUID(),
+              userId: user.id,
+              repositoryId: repositoryRecord.id,
+              planId: null,
+              workerId: result.worker.id,
+              snapshotId: snapshotRef?.snapshotId ?? null,
+              snapshotTime: snapshotRef?.snapshotTime ?? null,
+              output: proxy.data,
+            });
           } else {
             await createBackupEvent({
               userId: user.id,
@@ -4512,6 +4964,182 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
       detail: {
         tags: ["Rustic"],
         summary: "Trigger repository backup now",
+      },
+    },
+  )
+  .post(
+    "/rustic/repositories/:id/restore",
+    async ({ request, params, body, status }) => {
+      const user = await getAuthenticatedUser(request);
+      if (!user) {
+        return status(401, { error: "Unauthorized" });
+      }
+      if (!hasRoleAtLeast(user, "operator")) {
+        return status(401, { error: "Requires operator role or higher" });
+      }
+
+      const parsedRepositoryId = repositoryIdSchema.safeParse(params.id);
+      if (!parsedRepositoryId.success) {
+        return status(400, { error: "Invalid repository id" });
+      }
+
+      const repositoryRecord = await db.query.rusticRepository.findFirst({
+        where: (table, { and: dbAnd, eq: dbEq }) =>
+          dbAnd(dbEq(table.id, parsedRepositoryId.data), dbEq(table.userId, user.id)),
+        columns: {
+          id: true,
+          workerId: true,
+          backend: true,
+          repository: true,
+          password: true,
+          optionsJson: true,
+        },
+      });
+      if (!repositoryRecord) {
+        return status(404, { error: "Repository not found" });
+      }
+      if (!repositoryRecord.workerId) {
+        return status(400, { error: "Repository is not attached to a worker" });
+      }
+
+      const backupWorkerIds = await getBackupWorkerIdsForRepository(repositoryRecord.id);
+      const targetWorkerId = body.workerId ?? repositoryRecord.workerId ?? backupWorkerIds[0];
+      if (!targetWorkerId) {
+        return status(400, { error: "No worker available for this repository" });
+      }
+
+      const result = await getWorkerForProxy(user.id, targetWorkerId);
+      if ("error" in result) {
+        return status(result.status, { error: result.error });
+      }
+
+      try {
+        const rawOptions = parseOptionsJson(repositoryRecord.optionsJson);
+        const restoreOptions = hasRcloneOptions(rawOptions)
+          ? rawOptions
+          : repositoryRecord.backend === "s3" && hasLegacyS3Options(rawOptions)
+            ? enrichRcloneOptionsFromS3(rawOptions)
+            : rawOptions;
+        const shouldForceRclone =
+          repositoryRecord.backend === "rclone" ||
+          (repositoryRecord.backend === "s3" &&
+            (hasRcloneOptions(restoreOptions) || hasLegacyS3Options(restoreOptions)));
+        const restoreBackend = shouldForceRclone ? "rclone" : repositoryRecord.backend;
+        const restoreRepository = shouldForceRclone
+          ? deriveRcloneRepositoryForInit(
+              repositoryRecord.repository,
+              repositoryRecord.id,
+              restoreOptions,
+            )
+          : repositoryRecord.repository;
+
+        const proxy = await proxyToWorker(
+          result.worker.endpoint,
+          result.worker.syncToken,
+          "/rustic/restore",
+          "POST",
+          {
+            repository: restoreRepository,
+            password: repositoryRecord.password ?? undefined,
+            snapshot: body.snapshot,
+            target: body.target,
+            path: body.path,
+            dryRun: body.dryRun ?? false,
+            backend: restoreBackend,
+            options: shouldForceRclone ? restoreOptions : undefined,
+          },
+        );
+
+        await writeAuditLog({
+          actorUserId: user.id,
+          action: "snapshot.restore",
+          resourceType: "rustic_repository",
+          resourceId: repositoryRecord.id,
+          metadata: {
+            snapshot: body.snapshot,
+            target: body.target,
+            workerId: targetWorkerId,
+            dryRun: body.dryRun ?? false,
+            status: proxy.status,
+          },
+          request,
+        });
+
+        return status(proxy.status as 200, proxy.data);
+      } catch {
+        return status(502, { error: "Failed to reach worker" });
+      }
+    },
+    {
+      params: t.Object({ id: t.String({ format: "uuid" }) }),
+      body: t.Object({
+        snapshot: t.String({ minLength: 1, maxLength: 512 }),
+        target: t.String({ minLength: 1, maxLength: 1024 }),
+        path: t.Optional(t.String({ maxLength: 1024 })),
+        dryRun: t.Optional(t.Boolean()),
+        workerId: t.Optional(t.String({ format: "uuid" })),
+      }),
+      detail: {
+        tags: ["Rustic"],
+        summary: "Restore snapshot to original or alternate location",
+      },
+    },
+  )
+  .post(
+    "/rustic/repositories/:id/ls-dirs",
+    async ({ request, params, body, status }) => {
+      const user = await getAuthenticatedUser(request);
+      if (!user) {
+        return status(401, { error: "Unauthorized" });
+      }
+
+      const parsedRepositoryId = repositoryIdSchema.safeParse(params.id);
+      if (!parsedRepositoryId.success) {
+        return status(400, { error: "Invalid repository id" });
+      }
+
+      const repositoryRecord = await db.query.rusticRepository.findFirst({
+        where: (table, { and: dbAnd, eq: dbEq }) =>
+          dbAnd(dbEq(table.id, parsedRepositoryId.data), dbEq(table.userId, user.id)),
+        columns: { id: true, workerId: true },
+      });
+      if (!repositoryRecord) {
+        return status(404, { error: "Repository not found" });
+      }
+
+      const backupWorkerIds = await getBackupWorkerIdsForRepository(repositoryRecord.id);
+      const targetWorkerId = body.workerId ?? repositoryRecord.workerId ?? backupWorkerIds[0];
+      if (!targetWorkerId) {
+        return status(400, { error: "No worker available for this repository" });
+      }
+
+      const result = await getWorkerForProxy(user.id, targetWorkerId);
+      if ("error" in result) {
+        return status(result.status, { error: result.error });
+      }
+
+      try {
+        const proxy = await proxyToWorker(
+          result.worker.endpoint,
+          result.worker.syncToken,
+          "/rustic/ls-dirs",
+          "POST",
+          { path: body.path },
+        );
+        return status(proxy.status as 200, proxy.data);
+      } catch {
+        return status(502, { error: "Failed to reach worker" });
+      }
+    },
+    {
+      params: t.Object({ id: t.String({ format: "uuid" }) }),
+      body: t.Object({
+        path: t.Optional(t.String({ maxLength: 4096 })),
+        workerId: t.Optional(t.String({ format: "uuid" })),
+      }),
+      detail: {
+        tags: ["Rustic"],
+        summary: "List directories on the worker filesystem at a given path",
       },
     },
   )
@@ -4582,6 +5210,9 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
       if (!user) {
         return status(401, { error: "Unauthorized" });
       }
+      if (!hasRoleAtLeast(user, "admin")) {
+        return status(401, { error: "Requires admin role or higher" });
+      }
 
       const parsedCron = parseCronExpression(body.cron);
       if (!parsedCron) {
@@ -4602,7 +5233,9 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
       }
       const backupWorkerIds = await getBackupWorkerIdsForRepository(repository.id);
       if (workerIds.some((workerId) => !backupWorkerIds.includes(workerId))) {
-        return status(400, { error: "One or more workers are not attached to repository backup workers" });
+        return status(400, {
+          error: "One or more workers are not attached to repository backup workers",
+        });
       }
 
       const now = new Date();
@@ -4651,6 +5284,15 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
         return status(500, { error: "Failed to create backup plan" });
       }
 
+      await writeAuditLog({
+        actorUserId: user.id,
+        action: "plan.create",
+        resourceType: "backup_plan",
+        resourceId: created.id,
+        metadata: { repositoryId: repository.id, workerIds },
+        request,
+      });
+
       return status(201, { plan: created });
     },
     {
@@ -4674,6 +5316,9 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
       const user = await getAuthenticatedUser(request);
       if (!user) {
         return status(401, { error: "Unauthorized" });
+      }
+      if (!hasRoleAtLeast(user, "admin")) {
+        return status(401, { error: "Requires admin role or higher" });
       }
 
       const parsedPlanId = repositoryIdSchema.safeParse(params.id);
@@ -4733,12 +5378,14 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
         .where(eq(backupPlanWorker.planId, existing.id));
       const currentWorkerIds = Array.from(
         new Set(
-          (existingPlanWorkerRows.length > 0
+          existingPlanWorkerRows.length > 0
             ? existingPlanWorkerRows.map((row) => row.workerId)
-            : [existing.workerId]),
+            : [existing.workerId],
         ),
       );
-      const nextWorkerIds = body.workerIds ? await resolveOwnedWorkerIds(user.id, body.workerIds) : currentWorkerIds;
+      const nextWorkerIds = body.workerIds
+        ? await resolveOwnedWorkerIds(user.id, body.workerIds)
+        : currentWorkerIds;
       if (nextWorkerIds.length === 0) {
         return status(400, { error: "At least one worker is required" });
       }
@@ -4756,10 +5403,13 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
         return status(400, { error: workerPathRulesResult.error });
       }
       const existingPathsConfig = parsePlanPathsConfig(existing.pathsJson);
-      const nextDefaultPaths = body.paths ? normalizePaths(body.paths) : existingPathsConfig.defaultPaths;
-      const nextWorkerPathRules = body.workerPathRules === undefined
-        ? existingPathsConfig.workerPaths
-        : workerPathRulesResult.rules;
+      const nextDefaultPaths = body.paths
+        ? normalizePaths(body.paths)
+        : existingPathsConfig.defaultPaths;
+      const nextWorkerPathRules =
+        body.workerPathRules === undefined
+          ? existingPathsConfig.workerPaths
+          : workerPathRulesResult.rules;
       const nextPathsConfig: PlanPathsConfig = {
         defaultPaths: nextDefaultPaths,
         workerPaths: nextWorkerPathRules,
@@ -4785,13 +5435,16 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
           dryRun: body.dryRun ?? existing.dryRun,
           enabled: nextEnabled,
           nextRunAt,
-          pruneEnabled: body.pruneEnabled === null ? false : (body.pruneEnabled ?? existing.pruneEnabled),
+          pruneEnabled:
+            body.pruneEnabled === null ? false : (body.pruneEnabled ?? existing.pruneEnabled),
           keepLast: body.keepLast === null ? null : (body.keepLast ?? existing.keepLast),
           keepDaily: body.keepDaily === null ? null : (body.keepDaily ?? existing.keepDaily),
           keepWeekly: body.keepWeekly === null ? null : (body.keepWeekly ?? existing.keepWeekly),
-          keepMonthly: body.keepMonthly === null ? null : (body.keepMonthly ?? existing.keepMonthly),
+          keepMonthly:
+            body.keepMonthly === null ? null : (body.keepMonthly ?? existing.keepMonthly),
           keepYearly: body.keepYearly === null ? null : (body.keepYearly ?? existing.keepYearly),
-          keepWithin: body.keepWithin === null ? null : (body.keepWithin?.trim() || existing.keepWithin),
+          keepWithin:
+            body.keepWithin === null ? null : body.keepWithin?.trim() || existing.keepWithin,
         })
         .where(eq(backupPlan.id, existing.id));
       await replacePlanWorkers(existing.id, nextWorkerIds);
@@ -4801,6 +5454,14 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
       if (!updated) {
         return status(500, { error: "Failed to update backup plan" });
       }
+
+      await writeAuditLog({
+        actorUserId: user.id,
+        action: "plan.update",
+        resourceType: "backup_plan",
+        resourceId: updated.id,
+        request,
+      });
 
       return { plan: updated };
     },
@@ -4827,6 +5488,9 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
       if (!user) {
         return status(401, { error: "Unauthorized" });
       }
+      if (!hasRoleAtLeast(user, "admin")) {
+        return status(401, { error: "Requires admin role or higher" });
+      }
 
       const parsedPlanId = repositoryIdSchema.safeParse(params.id);
       if (!parsedPlanId.success) {
@@ -4843,6 +5507,13 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
       }
 
       await db.delete(backupPlan).where(eq(backupPlan.id, existing.id));
+      await writeAuditLog({
+        actorUserId: user.id,
+        action: "plan.delete",
+        resourceType: "backup_plan",
+        resourceId: existing.id,
+        request,
+      });
       return new Response(null, { status: 204 });
     },
     {
@@ -4910,6 +5581,9 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
       if (!user) {
         return status(401, { error: "Unauthorized" });
       }
+      if (!hasRoleAtLeast(user, "operator")) {
+        return status(401, { error: "Requires operator role or higher" });
+      }
 
       const parsedPlanId = repositoryIdSchema.safeParse(params.id);
       if (!parsedPlanId.success) {
@@ -4962,6 +5636,13 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
           await releaseBackupPlanLease(existing.id);
         }
       })();
+      await writeAuditLog({
+        actorUserId: user.id,
+        action: "plan.run",
+        resourceType: "backup_plan",
+        resourceId: existing.id,
+        request,
+      });
       return status(202, { ok: true });
     },
     {
@@ -4976,6 +5657,144 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
       detail: {
         tags: ["Rustic"],
         summary: "Run backup plan now",
+      },
+    },
+  )
+  .post(
+    "/rustic/plans/bulk",
+    async ({ request, body, status }) => {
+      const user = await getAuthenticatedUser(request);
+      if (!user) {
+        return status(401, { error: "Unauthorized" });
+      }
+
+      const requiresAdmin = body.action === "delete";
+      if (!hasRoleAtLeast(user, requiresAdmin ? "admin" : "operator")) {
+        return status(401, {
+          error: `Requires ${requiresAdmin ? "admin" : "operator"} role or higher`,
+        });
+      }
+
+      const planIds = Array.from(new Set(body.planIds)).slice(0, 200);
+      if (planIds.length === 0) {
+        return status(400, { error: "At least one plan id is required" });
+      }
+
+      const plans = await db.query.backupPlan.findMany({
+        where: (table, { and: dbAnd, eq: dbEq, inArray }) =>
+          dbAnd(dbEq(table.userId, user.id), inArray(table.id, planIds)),
+        columns: {
+          id: true,
+          userId: true,
+          repositoryId: true,
+          workerId: true,
+          name: true,
+          cron: true,
+          pathsJson: true,
+          tagsJson: true,
+          dryRun: true,
+          enabled: true,
+          lastRunAt: true,
+          nextRunAt: true,
+          lastStatus: true,
+          lastError: true,
+          lastDurationMs: true,
+          pruneEnabled: true,
+          keepLast: true,
+          keepDaily: true,
+          keepWeekly: true,
+          keepMonthly: true,
+          keepYearly: true,
+          keepWithin: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      const foundById = new Map(plans.map((plan) => [plan.id, plan]));
+      const results: Array<{ planId: string; ok: boolean; message: string }> = [];
+
+      for (const planId of planIds) {
+        const plan = foundById.get(planId);
+        if (!plan) {
+          results.push({ planId, ok: false, message: "Plan not found" });
+          continue;
+        }
+
+        try {
+          if (body.action === "pause") {
+            await db
+              .update(backupPlan)
+              .set({ enabled: false, nextRunAt: null })
+              .where(eq(backupPlan.id, plan.id));
+            results.push({ planId, ok: true, message: "Paused" });
+            continue;
+          }
+          if (body.action === "resume") {
+            await db
+              .update(backupPlan)
+              .set({ enabled: true, nextRunAt: computeNextRun(plan.cron, new Date()) })
+              .where(eq(backupPlan.id, plan.id));
+            results.push({ planId, ok: true, message: "Resumed" });
+            continue;
+          }
+          if (body.action === "delete") {
+            await db.delete(backupPlan).where(eq(backupPlan.id, plan.id));
+            results.push({ planId, ok: true, message: "Deleted" });
+            continue;
+          }
+
+          const locked = await acquireBackupPlanLease(plan.id);
+          if (!locked) {
+            results.push({ planId, ok: false, message: "Already running" });
+            continue;
+          }
+          void (async () => {
+            try {
+              await enqueueBackupPlanRuns(plan);
+            } finally {
+              await releaseBackupPlanLease(plan.id);
+            }
+          })();
+          results.push({ planId, ok: true, message: "Triggered" });
+        } catch (error) {
+          results.push({
+            planId,
+            ok: false,
+            message: error instanceof Error ? error.message : "Operation failed",
+          });
+        }
+      }
+
+      await writeAuditLog({
+        actorUserId: user.id,
+        action: `plan.bulk.${body.action}`,
+        resourceType: "backup_plan",
+        metadata: { planIds, results },
+        request,
+      });
+
+      return {
+        action: body.action,
+        requested: planIds.length,
+        ok: results.filter((item) => item.ok).length,
+        failed: results.filter((item) => !item.ok).length,
+        results,
+      };
+    },
+    {
+      body: t.Object({
+        action: t.Union([
+          t.Literal("trigger"),
+          t.Literal("pause"),
+          t.Literal("resume"),
+          t.Literal("delete"),
+        ]),
+        planIds: t.Array(t.String({ format: "uuid" }), { minItems: 1, maxItems: 200 }),
+      }),
+      detail: {
+        tags: ["Rustic"],
+        summary: "Bulk operation for backup plans",
       },
     },
   )
@@ -5376,4 +6195,37 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
         summary: "Forget a single snapshot",
       },
     },
-  );
+  )
+  .get("/rustic/repository-size", async ({ request, query, status }) => {
+    const user = await getAuthenticatedUser(request);
+    if (!user) {
+      return status(401, { error: "Unauthorized" });
+    }
+
+    const remote =
+      typeof query?.remote === "string" && query.remote.trim().length > 0 && query.remote.trim();
+
+    const result = await getAnyHealthyWorkerForProxy(user.id);
+    if ("error" in result) {
+      return status(result.status, { error: result.error });
+    }
+
+    try {
+      const proxy = await proxyToWorker(
+        result.worker.endpoint,
+        result.worker.syncToken,
+        "/rustic/rclone-size",
+        "POST",
+        { remote },
+      );
+      return status(proxy.status as 200, proxy.data);
+    } catch (error) {
+      logError("repository size proxy request failed", {
+        userId: user.id,
+        workerId: result.worker.id,
+        remote,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return status(503, { error: "Failed to reach worker" });
+    }
+  });

@@ -157,6 +157,19 @@ struct RusticRepositoryRequest {
 const PENDING_REPORTS_MAX: usize = 500;
 const PENDING_REPORT_MAX_ATTEMPTS: u32 = 20;
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RcloneSizeRequest {
+    remote: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RcloneSizeResponse {
+    worker: WorkerRuntimeStats,
+    rclone: RusticCommandResult,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct PendingReport {
@@ -174,6 +187,31 @@ struct RusticSnapshotFilesRequest {
     password: Option<String>,
     backend: Option<String>,
     options: Option<HashMap<String, String>>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RusticRestoreRequest {
+    repository: String,
+    snapshot: String,
+    target: String,
+    path: Option<String>,
+    password: Option<String>,
+    backend: Option<String>,
+    options: Option<HashMap<String, String>>,
+    dry_run: Option<bool>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LsDirsRequest {
+    path: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LsDirsResponse {
+    dirs: Vec<String>,
 }
 
 #[derive(Deserialize)]
@@ -373,6 +411,9 @@ async fn main() {
         .route("/rustic/init", post(rustic_init))
         .route("/rustic/backup", post(rustic_backup))
         .route("/rustic/forget", post(rustic_forget))
+        .route("/rustic/restore", post(rustic_restore))
+        .route("/rustic/ls-dirs", post(ls_dirs))
+        .route("/rustic/rclone-size", post(rclone_size))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             request_logger,
@@ -409,6 +450,26 @@ async fn main() {
 
 async fn health() -> &'static str {
     "ok"
+}
+
+async fn rclone_size(
+    State(state): State<AppState>,
+    Json(payload): Json<RcloneSizeRequest>,
+) -> Result<Json<RcloneSizeResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let remote = payload.remote.trim().to_string();
+    if remote.is_empty() {
+        return Err(api_error(StatusCode::BAD_REQUEST, "remote is required"));
+    }
+
+    let worker = worker_runtime_stats(&state);
+    let rclone = run_rclone_command(
+        &state,
+        vec!["size".to_string(), remote.clone(), "--json".to_string()],
+        vec!["rclone".to_string(), "size".to_string(), remote, "--json".to_string()],
+    )
+    .await?;
+
+    Ok(Json(RcloneSizeResponse { worker, rclone }))
 }
 
 async fn index() -> &'static str {
@@ -1346,6 +1407,107 @@ async fn rustic_forget(
     }
 
     Ok(Json(RusticForgetResponse { worker, rustic }))
+}
+
+async fn rustic_restore(
+    State(state): State<AppState>,
+    Json(payload): Json<RusticRestoreRequest>,
+) -> Result<Json<RusticRepositoryCommandResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let repository = payload.repository.trim();
+    let snapshot = payload.snapshot.trim();
+    let target = payload.target.trim();
+    if repository.is_empty() {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "repository is required for restore",
+        ));
+    }
+    if snapshot.is_empty() {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "snapshot is required for restore",
+        ));
+    }
+    if target.is_empty() {
+        return Err(api_error(
+            StatusCode::BAD_REQUEST,
+            "target is required for restore",
+        ));
+    }
+
+    let repository = prepare_repository_for_rclone(
+        &state,
+        repository.to_string(),
+        payload.backend.as_deref(),
+        &payload.options.unwrap_or_default(),
+        "restore",
+    )
+    .await?;
+
+    let mut env_vars = Vec::new();
+    if let Some(password) = payload.password {
+        if !password.trim().is_empty() {
+            env_vars.push(("RUSTIC_PASSWORD".to_string(), password));
+        }
+    }
+
+    let mut args = vec![
+        "--repository".to_string(),
+        repository,
+        "restore".to_string(),
+        "--no-progress".to_string(),
+        "--target".to_string(),
+        target.to_string(),
+        snapshot.to_string(),
+    ];
+    if let Some(path) = payload.path {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            args.push(trimmed.to_string());
+        }
+    }
+    if payload.dry_run == Some(true) {
+        args.push("--dry-run".to_string());
+    }
+
+    let worker = worker_runtime_stats(&state);
+    let rustic = run_rustic_command(&state, args, env_vars, None).await?;
+    if !rustic.success {
+        let reason =
+            first_useful_error_line(&rustic.stderr).unwrap_or_else(|| "restore command failed".to_string());
+        return Err(api_error(StatusCode::BAD_GATEWAY, reason));
+    }
+
+    Ok(Json(RusticRepositoryCommandResponse { worker, rustic }))
+}
+
+async fn ls_dirs(
+    Json(payload): Json<LsDirsRequest>,
+) -> Result<Json<LsDirsResponse>, (StatusCode, Json<ApiErrorResponse>)> {
+    let path = payload
+        .path
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("/")
+        .to_string();
+
+    let mut dirs = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&path) {
+        for entry in entries.flatten() {
+            if let Ok(file_type) = entry.file_type() {
+                if file_type.is_dir() {
+                    if let Some(name) = entry.file_name().to_str() {
+                        if !name.starts_with('.') {
+                            dirs.push(format!("{}/{}", path.trim_end_matches('/'), name));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    dirs.sort();
+    Ok(Json(LsDirsResponse { dirs }))
 }
 
 async fn rustic_init(

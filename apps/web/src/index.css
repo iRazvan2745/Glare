@@ -4,6 +4,7 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* dont use white mode please */
 :root {
   --background: var(--color-white);
   --foreground: var(--color-neutral-800);
@@ -11,7 +12,7 @@
   --card-foreground: var(--color-neutral-800);
   --popover: var(--color-white);
   --popover-foreground: var(--color-neutral-800);
-  --primary: var(--color-neutral-800);
+  --primary: oklch(0.623 0.214 259.815);
   --primary-foreground: var(--color-neutral-50);
   --secondary: --alpha(var(--color-black) / 4%);
   --secondary-foreground: var(--color-neutral-800);
@@ -183,8 +184,8 @@
   --color-info-foreground: var(--info-foreground);
   --color-info: var(--info);
   @keyframes skeleton {
-  to {
-    background-position: -200% 0;
+    to {
+      background-position: -200% 0;
     }
   }
 }

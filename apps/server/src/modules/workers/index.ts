@@ -4,13 +4,15 @@ import { backupPlanRun } from "@glare/db/schema/backup-plan-runs";
 import { backupEvent } from "@glare/db/schema/backup-events";
 import { workerSyncEvent } from "@glare/db/schema/worker-sync-events";
 import { worker } from "@glare/db/schema/workers";
-import { and, count, desc, eq, gte } from "drizzle-orm";
+import { and, count, desc, eq, gte, sql } from "drizzle-orm";
 import { type } from "arktype";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Elysia } from "elysia";
 import { getAuthenticatedUser } from "../../shared/auth/session";
 import { logInfo, logWarn } from "../../shared/logger";
+import { detectBackupSizeAnomaly, recordBackupMetric } from "../../shared/backup-metrics";
 import { sendDiscordNotification } from "../../shared/notifications";
+import { recordStorageUsageSample } from "../../shared/storage-usage";
 
 const workerIdType = type("string.uuid");
 const createWorkerType = type({ name: "string", "region?": "string" });
@@ -29,19 +31,19 @@ const claimBackupRunsType = type({
 });
 const completeBackupRunType = type({
   status: '"success" | "failed"',
-  "error?": "string <= 4096",
+  "error?": "string <= 4096 | null",
   "durationMs?": "number.integer >= 0",
-  "snapshotId?": "string <= 512",
-  "snapshotTime?": "string",
+  "snapshotId?": "string <= 512 | null",
+  "snapshotTime?": "string | null",
   "output?": "unknown",
 });
 const reportBackupPlanRunType = type({
   status: '"success" | "failed"',
-  "error?": "string <= 4096",
+  "error?": "string <= 4096 | null",
   "durationMs?": "number.integer >= 0",
-  "snapshotId?": "string <= 512",
-  "snapshotTime?": "string",
-  "nextRunAt?": "string",
+  "snapshotId?": "string <= 512 | null",
+  "snapshotTime?": "string | null",
+  "nextRunAt?": "string | null",
   "output?": "unknown",
 });
 
@@ -72,7 +74,7 @@ const updateWorkerSchema = {
     if (name.length < 1 || name.length > 120) {
       return { success: false as const };
     }
-    const region = data.region === null ? null : (data.region?.trim() || undefined);
+    const region = data.region === null ? null : data.region?.trim() || undefined;
     if (region && region.length > 120) {
       return { success: false as const };
     }
@@ -370,7 +372,9 @@ function parseStringArrayJson(value: string | null): string[] {
   try {
     const parsed = JSON.parse(value) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+    return parsed.filter(
+      (item): item is string => typeof item === "string" && item.trim().length > 0,
+    );
   } catch {
     return [];
   }
@@ -389,7 +393,9 @@ function parsePlanPathsConfig(value: string | null): PlanPathsConfig {
     const parsed = JSON.parse(value) as unknown;
     if (Array.isArray(parsed)) {
       return {
-        defaultPaths: normalizePaths(parsed.filter((item): item is string => typeof item === "string")),
+        defaultPaths: normalizePaths(
+          parsed.filter((item): item is string => typeof item === "string"),
+        ),
         workerPaths: {},
       };
     }
@@ -398,12 +404,16 @@ function parsePlanPathsConfig(value: string | null): PlanPathsConfig {
     }
     const record = parsed as Record<string, unknown>;
     const defaultPaths = Array.isArray(record.defaultPaths)
-      ? normalizePaths(record.defaultPaths.filter((item): item is string => typeof item === "string"))
+      ? normalizePaths(
+          record.defaultPaths.filter((item): item is string => typeof item === "string"),
+        )
       : [];
     const workerPaths: Record<string, string[]> = {};
     const rawWorkerPaths = record.workerPaths;
     if (rawWorkerPaths && typeof rawWorkerPaths === "object" && !Array.isArray(rawWorkerPaths)) {
-      for (const [workerId, workerValue] of Object.entries(rawWorkerPaths as Record<string, unknown>)) {
+      for (const [workerId, workerValue] of Object.entries(
+        rawWorkerPaths as Record<string, unknown>,
+      )) {
         if (!Array.isArray(workerValue)) continue;
         const nextPaths = normalizePaths(
           workerValue.filter((item): item is string => typeof item === "string"),
@@ -429,7 +439,9 @@ function resolvePathsForWorker(config: PlanPathsConfig, workerId: string) {
 }
 
 function hasRcloneOptions(options: Record<string, string>) {
-  return Object.keys(options).some((key) => key === "rclone.type" || key.startsWith("rclone.config."));
+  return Object.keys(options).some(
+    (key) => key === "rclone.type" || key.startsWith("rclone.config."),
+  );
 }
 
 function hasLegacyS3Options(options: Record<string, string>) {
@@ -643,32 +655,26 @@ export const workerRoutes = new Elysia()
       return status(404, { error: "Worker not found" });
     }
 
-    const regionClause = parsedBody.data.region !== undefined ? `, "region" = $3` : "";
-    const regionParams = parsedBody.data.region !== undefined
-      ? [parsedBody.data.name, existingWorker.id, parsedBody.data.region]
-      : [parsedBody.data.name, existingWorker.id];
-
-    await db.$client.query(
-      `UPDATE "worker" SET "name" = $1, "updated_at" = NOW()${regionClause} WHERE "id" = $2`,
-      regionParams,
-    );
-
-    const updatedWorker = await db.query.worker.findFirst({
-      where: (table, { and, eq }) =>
-        and(eq(table.id, existingWorker.id), eq(table.userId, user.id)),
-      columns: {
-        id: true,
-        name: true,
-        region: true,
-        status: true,
-        lastSeenAt: true,
-        uptimeMs: true,
-        requestsTotal: true,
-        errorTotal: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
+    const [updatedWorker] = await db
+      .update(worker)
+      .set({
+        name: parsedBody.data.name,
+        ...(parsedBody.data.region !== undefined ? { region: parsedBody.data.region } : {}),
+        updatedAt: new Date(),
+      })
+      .where(and(eq(worker.id, existingWorker.id), eq(worker.userId, user.id)))
+      .returning({
+        id: worker.id,
+        name: worker.name,
+        region: worker.region,
+        status: worker.status,
+        lastSeenAt: worker.lastSeenAt,
+        uptimeMs: worker.uptimeMs,
+        requestsTotal: worker.requestsTotal,
+        errorTotal: worker.errorTotal,
+        createdAt: worker.createdAt,
+        updatedAt: worker.updatedAt,
+      });
 
     if (!updatedWorker) {
       return status(500, { error: "Failed to update worker" });
@@ -699,7 +705,7 @@ export const workerRoutes = new Elysia()
       return status(404, { error: "Worker not found" });
     }
 
-    await db.$client.query(`DELETE FROM "worker" WHERE "id" = $1`, [existingWorker.id]);
+    await db.delete(worker).where(eq(worker.id, existingWorker.id));
 
     return status(204);
   })
@@ -749,10 +755,7 @@ export const workerRoutes = new Elysia()
     const whereExpression = and(...whereClauses);
 
     const [countRows, eventRowsDesc] = await Promise.all([
-      db
-        .select({ total: count() })
-        .from(workerSyncEvent)
-        .where(whereExpression),
+      db.select({ total: count() }).from(workerSyncEvent).where(whereExpression),
       db
         .select({
           id: workerSyncEvent.id,
@@ -807,32 +810,42 @@ export const workerRoutes = new Elysia()
       },
     });
 
-    await db.$client.query(
-      `UPDATE "worker"
-       SET "status" = $1, "last_seen_at" = NOW(), "uptime_ms" = $2, "requests_total" = $3, "error_total" = $4, "endpoint" = $5, "sync_token" = $6, "updated_at" = NOW()
-       WHERE "id" = $7`,
-      [
-        parsed.data.status,
-        parsed.data.uptimeMs,
-        parsed.data.requestsTotal,
-        parsed.data.errorTotal,
-        parsed.data.endpoint ?? null,
-        auth.syncToken,
-        auth.workerId,
-      ],
-    );
+    await db.transaction(async (tx) => {
+      await tx
+        .update(worker)
+        .set({
+          status: parsed.data.status,
+          lastSeenAt: new Date(),
+          uptimeMs: parsed.data.uptimeMs,
+          requestsTotal: parsed.data.requestsTotal,
+          errorTotal: parsed.data.errorTotal,
+          endpoint: parsed.data.endpoint ?? null,
+          syncToken: auth.syncToken,
+          updatedAt: new Date(),
+        })
+        .where(eq(worker.id, auth.workerId));
 
-    await db.$client.query(
-      `INSERT INTO "worker_sync_event" ("id", "worker_id", "status", "uptime_ms", "requests_total", "error_total", "created_at")
-       VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, NOW())`,
-      [
-        auth.workerId,
-        parsed.data.status,
-        parsed.data.uptimeMs,
-        parsed.data.requestsTotal,
-        parsed.data.errorTotal,
-      ],
-    );
+      await tx.insert(workerSyncEvent).values({
+        id: crypto.randomUUID(),
+        workerId: auth.workerId,
+        status: parsed.data.status,
+        uptimeMs: parsed.data.uptimeMs,
+        requestsTotal: parsed.data.requestsTotal,
+        errorTotal: parsed.data.errorTotal,
+        createdAt: new Date(),
+      });
+
+      await tx.execute(sql`
+        DELETE FROM "worker_sync_event"
+        WHERE "worker_id" = ${auth.workerId}
+          AND "id" NOT IN (
+            SELECT "id" FROM "worker_sync_event"
+            WHERE "worker_id" = ${auth.workerId}
+            ORDER BY "created_at" DESC
+            LIMIT 10000
+          )
+      `);
+    });
 
     const persistedWorker = await db.query.worker.findFirst({
       where: (table, { eq }) => eq(table.id, auth.workerId),
@@ -917,22 +930,24 @@ export const workerRoutes = new Elysia()
       [auth.workerId],
     );
 
-    const plans = (rows.rows as Array<{
-      id: string;
-      userId: string;
-      repositoryId: string;
-      name: string;
-      cron: string;
-      pathsJson: string | null;
-      tagsJson: string | null;
-      dryRun: boolean;
-      enabled: boolean;
-      updatedAt: Date | string;
-      backend: string;
-      repository: string;
-      password: string | null;
-      optionsJson: string | null;
-    }>)
+    const plans = (
+      rows.rows as Array<{
+        id: string;
+        userId: string;
+        repositoryId: string;
+        name: string;
+        cron: string;
+        pathsJson: string | null;
+        tagsJson: string | null;
+        dryRun: boolean;
+        enabled: boolean;
+        updatedAt: Date | string;
+        backend: string;
+        repository: string;
+        password: string | null;
+        optionsJson: string | null;
+      }>
+    )
       .map((row) => {
         const pathsConfig = parsePlanPathsConfig(row.pathsJson);
         const paths = resolvePathsForWorker(pathsConfig, auth.workerId);
@@ -1034,6 +1049,53 @@ export const workerRoutes = new Elysia()
       finishedAt,
     });
 
+    if (parsedBody.data.status === "success") {
+      await recordStorageUsageSample({
+        userId: plan.userId,
+        repositoryId: plan.repositoryId,
+        runId,
+        output: parsedBody.data.output ?? null,
+      });
+      const metric = await recordBackupMetric({
+        runId,
+        userId: plan.userId,
+        repositoryId: plan.repositoryId,
+        planId: plan.id,
+        workerId: auth.workerId,
+        snapshotId: parsedBody.data.snapshotId ?? null,
+        snapshotTime: parsedBody.data.snapshotTime ? new Date(parsedBody.data.snapshotTime) : null,
+        output: parsedBody.data.output ?? null,
+      });
+      if (metric) {
+        const anomaly = await detectBackupSizeAnomaly({
+          metricId: metric.id,
+          userId: plan.userId,
+          planId: plan.id,
+          repositoryId: plan.repositoryId,
+          actualBytes: metric.bytesAdded,
+        });
+        if (anomaly) {
+          await db.insert(backupEvent).values({
+            id: crypto.randomUUID(),
+            userId: plan.userId,
+            repositoryId: plan.repositoryId,
+            planId: plan.id,
+            runId,
+            workerId: auth.workerId,
+            type: "backup_size_anomaly",
+            status: "open",
+            severity: anomaly.severity,
+            message: `Backup size anomaly detected (${anomaly.reason})`,
+            detailsJson: JSON.stringify({
+              expectedBytes: anomaly.expectedBytes,
+              actualBytes: metric.bytesAdded,
+              score: anomaly.score,
+            }),
+          });
+        }
+      }
+    }
+
     await db.insert(backupEvent).values({
       id: crypto.randomUUID(),
       userId: plan.userId,
@@ -1074,7 +1136,8 @@ export const workerRoutes = new Elysia()
       .set({
         lastRunAt: finishedAt,
         lastStatus: parsedBody.data.status,
-        lastError: parsedBody.data.status === "success" ? null : (parsedBody.data.error ?? "Backup failed"),
+        lastError:
+          parsedBody.data.status === "success" ? null : (parsedBody.data.error ?? "Backup failed"),
         lastDurationMs: parsedBody.data.durationMs ?? null,
         nextRunAt: parsedBody.data.nextRunAt ? new Date(parsedBody.data.nextRunAt) : null,
       })
@@ -1125,7 +1188,9 @@ export const workerRoutes = new Elysia()
       outputJson: string | null;
     }>) {
       try {
-        const parsedOutput = row.outputJson ? (JSON.parse(row.outputJson) as { request?: unknown }) : {};
+        const parsedOutput = row.outputJson
+          ? (JSON.parse(row.outputJson) as { request?: unknown })
+          : {};
         if (!parsedOutput.request || typeof parsedOutput.request !== "object") {
           throw new Error("missing request payload");
         }
@@ -1179,7 +1244,10 @@ export const workerRoutes = new Elysia()
          AND "worker_id" = $9
          AND "status" = 'running'
        RETURNING
+         "id" AS "runId",
          "plan_id" AS "planId",
+         "user_id" AS "userId",
+         "repository_id" AS "repositoryId",
          "run_group_id" AS "runGroupId"`,
       [
         parsedBody.data.status,
@@ -1195,10 +1263,63 @@ export const workerRoutes = new Elysia()
     );
 
     const completionRow = completed.rows[0] as
-      | { planId: string; runGroupId: string | null }
+      | {
+          runId: string;
+          planId: string;
+          userId: string;
+          repositoryId: string;
+          runGroupId: string | null;
+        }
       | undefined;
     if (!completionRow) {
       return status(404, { error: "Running backup run not found" });
+    }
+
+    if (parsedBody.data.status === "success") {
+      await recordStorageUsageSample({
+        userId: completionRow.userId,
+        repositoryId: completionRow.repositoryId,
+        runId: completionRow.runId,
+        output: parsedBody.data.output ?? null,
+      });
+      const metric = await recordBackupMetric({
+        runId: completionRow.runId,
+        userId: completionRow.userId,
+        repositoryId: completionRow.repositoryId,
+        planId: completionRow.planId,
+        workerId: auth.workerId,
+        snapshotId: parsedBody.data.snapshotId ?? null,
+        snapshotTime: parsedBody.data.snapshotTime ? new Date(parsedBody.data.snapshotTime) : null,
+        output: parsedBody.data.output ?? null,
+      });
+      if (metric) {
+        const anomaly = await detectBackupSizeAnomaly({
+          metricId: metric.id,
+          userId: completionRow.userId,
+          planId: completionRow.planId,
+          repositoryId: completionRow.repositoryId,
+          actualBytes: metric.bytesAdded,
+        });
+        if (anomaly) {
+          await db.insert(backupEvent).values({
+            id: crypto.randomUUID(),
+            userId: completionRow.userId,
+            repositoryId: completionRow.repositoryId,
+            planId: completionRow.planId,
+            runId: completionRow.runId,
+            workerId: auth.workerId,
+            type: "backup_size_anomaly",
+            status: "open",
+            severity: anomaly.severity,
+            message: `Backup size anomaly detected (${anomaly.reason})`,
+            detailsJson: JSON.stringify({
+              expectedBytes: anomaly.expectedBytes,
+              actualBytes: metric.bytesAdded,
+              score: anomaly.score,
+            }),
+          });
+        }
+      }
     }
 
     if (!completionRow.runGroupId) {
