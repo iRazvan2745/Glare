@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import {
   RiArrowRightSLine,
   RiDownloadCloud2Line,
@@ -392,7 +393,7 @@ function SnapshotsPageContent() {
 
       const wsUrl = buildSnapshotStreamWebSocketUrl(
         selectedRepositoryId,
-        process.env.NEXT_PUBLIC_SERVER_URL,
+        apiBaseUrl,
       );
       if (!wsUrl) {
         ensureFallbackPolling();

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import {
   RiArrowLeftLine,
   RiArrowLeftRightLine,
@@ -150,16 +151,16 @@ export default function WorkerDetailPage() {
     enabled: Boolean(session?.user && workerId),
     queryFn: async () => {
       const [workersData, chartEventsData, tableEventsData] = await Promise.all([
-        apiFetchJson<{ workers?: WorkerRecord[] }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`, {
+        apiFetchJson<{ workers?: WorkerRecord[] }>(`${apiBaseUrl}/api/workers`, {
           method: "GET",
           retries: 1,
         }),
         apiFetchJson<SyncEventsResponse>(
-          `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}/sync-events?hours=${RANGE_TO_HOURS[timeRange]}&limit=${RANGE_TO_EVENT_LIMIT[timeRange]}`,
+          `${apiBaseUrl}/api/workers/${workerId}/sync-events?hours=${RANGE_TO_HOURS[timeRange]}&limit=${RANGE_TO_EVENT_LIMIT[timeRange]}`,
           { method: "GET", retries: 1 },
         ),
         apiFetchJson<SyncEventsResponse>(
-          `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}/sync-events?hours=${RANGE_TO_HOURS[timeRange]}&status=${statusFilter}&limit=${EVENTS_PAGE_SIZE}&offset=${tableOffset}`,
+          `${apiBaseUrl}/api/workers/${workerId}/sync-events?hours=${RANGE_TO_HOURS[timeRange]}&status=${statusFilter}&limit=${EVENTS_PAGE_SIZE}&offset=${tableOffset}`,
           { method: "GET", retries: 1 },
         ),
       ]);

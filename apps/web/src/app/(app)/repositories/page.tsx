@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import {
   RiArrowDownSLine,
   RiCheckboxCircleLine,
@@ -985,13 +986,13 @@ export default function RepositoriesPage() {
     try {
       const [repoData, workerData] = await Promise.all([
         apiFetchJson<{ repositories?: RepositoryRecord[] }>(
-          `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+          `${apiBaseUrl}/api/rustic/repositories`,
           {
             method: "GET",
             retries: 1,
           },
         ),
-        apiFetchJson<{ workers?: WorkerRecord[] }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`, {
+        apiFetchJson<{ workers?: WorkerRecord[] }>(`${apiBaseUrl}/api/workers`, {
           method: "GET",
           retries: 1,
         }),
@@ -1019,7 +1020,7 @@ export default function RepositoriesPage() {
     setIsSaving(true);
     try {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+        `${apiBaseUrl}/api/rustic/repositories`,
         {
           method: "POST",
           body: JSON.stringify(buildRequestBody(createForm)),
@@ -1056,7 +1057,7 @@ export default function RepositoriesPage() {
       const body = buildRequestBody(editForm);
       // For edit, send workerId as null to unlink, and skip password if empty
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${editingId}`,
+        `${apiBaseUrl}/api/rustic/repositories/${editingId}`,
         {
           method: "PATCH",
           body: JSON.stringify({
@@ -1087,7 +1088,7 @@ export default function RepositoriesPage() {
     if (!deletingId) return;
     setIsSaving(true);
     try {
-      await apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${deletingId}`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${deletingId}`, {
         method: "DELETE",
         retries: 1,
       });
@@ -1113,7 +1114,7 @@ export default function RepositoriesPage() {
 
     setInitializingId(repo.id);
     try {
-      await apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repo.id}/init`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${repo.id}/init`, {
         method: "POST",
         retries: 1,
       });

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import { useEffect, useState } from "react";
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +16,7 @@ function getErrorMessage(error: unknown) {
 }
 
 async function apiFetch(path: string, options?: RequestInit) {
-  const base = (process.env.NEXT_PUBLIC_SERVER_URL ?? "").replace(/\/+$/, "");
+  const base = (apiBaseUrl ?? "").replace(/\/+$/, "");
   const res = await fetch(`${base}${path}`, {
     credentials: "include",
     headers: { "content-type": "application/json" },

@@ -1,0 +1,28 @@
+{
+  "name": "@glare/api",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "check-types": "tsc -b"
+  },
+  "dependencies": {
+    "@elysiajs/cors": "^1.4.1",
+    "@elysiajs/openapi": "^1.4.14",
+    "@glare/auth": "workspace:*",
+    "@glare/db": "workspace:*",
+    "arktype": "catalog:",
+    "better-auth": "catalog:",
+    "drizzle-orm": "^0.45.1",
+    "elysia": "^1.4.21",
+    "pino": "^10.3.1",
+    "pino-pretty": "^13.1.3",
+    "pino-std-serializers": "^7.1.0"
+  },
+  "devDependencies": {
+    "@glare/config": "workspace:*",
+    "@types/bun": "catalog:",
+    "typescript": "catalog:"
+  }
+}

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import {
   RiAlarmWarningLine,
   RiArrowLeftLine,
@@ -88,7 +89,7 @@ export default function RepositoryInfoPage() {
 
     try {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repositoryId}`,
+        `${apiBaseUrl}/api/rustic/repositories/${repositoryId}`,
         {
           method: "GET",
           retries: 1,
@@ -161,7 +162,7 @@ export default function RepositoryInfoPage() {
     setIsInitLoading(true);
     try {
       await apiFetchJson(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repository.id}/init`,
+        `${apiBaseUrl}/api/rustic/repositories/${repository.id}/init`,
         {
           method: "POST",
           retries: 1,

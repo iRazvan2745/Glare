@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
@@ -105,7 +106,7 @@ function getErrorMessage(error: unknown) {
 }
 
 async function apiFetch(path: string, options?: RequestInit) {
-  const base = (process.env.NEXT_PUBLIC_SERVER_URL ?? "").replace(/\/+$/, "");
+  const base = (apiBaseUrl ?? "").replace(/\/+$/, "");
   const res = await fetch(`${base}${path}`, {
     credentials: "include",
     headers: { "content-type": "application/json" },

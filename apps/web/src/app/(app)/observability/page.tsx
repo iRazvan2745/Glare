@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import {
   RiAlarmWarningLine,
   RiArrowLeftRightLine,
@@ -50,8 +51,8 @@ type OverviewResponse = {
     onlineWorkers: number;
     degradedWorkers: number;
     offlineWorkers: number;
-    requests24h: number;
-    errors24h: number;
+    requestsInRange: number;
+    errorsInRange: number;
     errorRatePercent: number;
   };
   incidents: ObservabilityEvent[];
@@ -125,7 +126,7 @@ export default function ObservabilityPage() {
     enabled: Boolean(session?.user),
     queryFn: () =>
       apiFetchJson<OverviewResponse>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/observability/overview?range=${range}`,
+        `${apiBaseUrl}/api/observability/overview?range=${range}`,
         {
           method: "GET",
         },
@@ -137,7 +138,7 @@ export default function ObservabilityPage() {
     enabled: Boolean(session?.user),
     queryFn: () =>
       apiFetchJson<EventsResponse>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/observability/events?severity=${severity}&status=${status}&limit=${pageSize}&offset=${offset}`,
+        `${apiBaseUrl}/api/observability/events?severity=${severity}&status=${status}&limit=${pageSize}&offset=${offset}`,
         { method: "GET" },
       ),
   });
@@ -147,7 +148,7 @@ export default function ObservabilityPage() {
     enabled: Boolean(session?.user),
     queryFn: () =>
       apiFetchJson<{ logs: AuditLogRecord[] }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/audit/logs?limit=20`,
+        `${apiBaseUrl}/api/audit/logs?limit=20`,
         {
           method: "GET",
         },
@@ -248,7 +249,7 @@ export default function ObservabilityPage() {
               variant="outline"
               onClick={() =>
                 window.open(
-                  `${process.env.NEXT_PUBLIC_SERVER_URL}/api/compliance/report.csv?hours=${RANGE_TO_HOURS[range] ?? 24}`,
+                  `${apiBaseUrl}/api/compliance/report.csv?hours=${RANGE_TO_HOURS[range] ?? 24}`,
                   "_blank",
                 )
               }
@@ -279,14 +280,14 @@ export default function ObservabilityPage() {
         />
         <KpiStat
           label="Requests (range)"
-          value={formatNumber(summary?.requests24h ?? 0)}
+          value={formatNumber(summary?.requestsInRange ?? 0)}
           helper="Aggregated worker sync telemetry"
           icon={RiArrowLeftRightLine}
           color="blue"
         />
         <KpiStat
           label="Errors (range)"
-          value={formatNumber(summary?.errors24h ?? 0)}
+          value={formatNumber(summary?.errorsInRange ?? 0)}
           helper="All error signals"
           icon={RiErrorWarningLine}
           color="red"

@@ -4,7 +4,7 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-ENV PORT=3002
+ENV PORT=3000
 ENV HOSTNAME=0.0.0.0
 
 COPY package.json bun.lock turbo.json tsconfig.json ./
@@ -13,13 +13,15 @@ COPY packages ./packages
 
 RUN bun install --frozen-lockfile
 
-ARG NEXT_PUBLIC_SERVER_URL=""
-ENV NEXT_PUBLIC_SERVER_URL=$NEXT_PUBLIC_SERVER_URL
+ARG NEXT_APP_URL="http://localhost:3002"
+ENV NEXT_APP_URL=$NEXT_APP_URL
+ARG APP_URL="http://localhost:3002"
+ENV APP_URL=$APP_URL
 
 RUN bunx turbo run build --filter=web
 
 WORKDIR /app/apps/web
 USER bun
-EXPOSE 3002
+EXPOSE 3000
 
 CMD ["bun", "run", "start"]

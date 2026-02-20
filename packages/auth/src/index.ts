@@ -6,11 +6,15 @@ import { admin } from "better-auth/plugins/admin";
 import { lastLoginMethod } from "better-auth/plugins";
 
 const configuredServerBaseUrl =
-  process.env.BETTER_AUTH_BASE_URL || process.env.BETTER_AUTH_URL || "http://localhost:3000";
-const configuredCorsOrigin = process.env.CORS_ORIGIN || "http://localhost:3002";
+  process.env.NEXT_APP_URL ||
+  process.env.APP_URL ||
+  process.env.BETTER_AUTH_BASE_URL ||
+  process.env.BETTER_AUTH_URL ||
+  "http://localhost:3002";
+const configuredCorsOrigin = process.env.NEXT_APP_URL || process.env.APP_URL || "http://localhost:3002";
 const trustedOrigins = Array.from(
   new Set(
-    [configuredCorsOrigin, process.env.WEB_ORIGIN, process.env.NEXT_PUBLIC_APP_URL]
+    [configuredCorsOrigin, process.env.APP_URL, process.env.WEB_ORIGIN, process.env.NEXT_PUBLIC_APP_URL]
       .filter((value): value is string => Boolean(value && value.trim().length > 0))
       .map((value) => value.replace(/\/+$/, "")),
   ),

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import { RiLockPasswordLine } from "@remixicon/react";
 import { useMemo } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -51,7 +52,7 @@ export default function SettingsSecurityPage() {
     queryKey: ["settings", session?.user?.id ?? "anonymous"],
     enabled: Boolean(session?.user),
     queryFn: () =>
-      apiFetchJson<{ settings?: SettingsPayload }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
+      apiFetchJson<{ settings?: SettingsPayload }>(`${apiBaseUrl}/api/settings`, {
         method: "GET",
         retries: 1,
       }),
@@ -59,7 +60,7 @@ export default function SettingsSecurityPage() {
 
   const saveSettingsMutation = useMutation({
     mutationFn: (payload: Partial<SettingsPayload>) =>
-      apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
+      apiFetchJson(`${apiBaseUrl}/api/settings`, {
         method: "POST",
         body: JSON.stringify(payload),
         retries: 1,

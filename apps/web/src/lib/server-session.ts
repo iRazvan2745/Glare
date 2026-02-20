@@ -1,4 +1,5 @@
 import { headers } from "next/headers";
+import { auth } from "@glare/auth";
 
 type ServerAuthSession = {
   user: {
@@ -12,23 +13,13 @@ type ServerAuthSession = {
 };
 
 export async function getServerSession(): Promise<ServerAuthSession | null> {
-  const requestHeaders = await headers();
-  const cookie = requestHeaders.get("cookie");
-
-  const response = await fetch(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/auth/get-session`, {
-    method: "GET",
-    headers: cookie ? { cookie } : undefined,
-    cache: "no-store",
+  const session = await auth.api.getSession({
+    headers: await headers(),
   });
 
-  if (!response.ok) {
+  if (!session?.user) {
     return null;
   }
 
-  const parsed = (await response.json().catch(() => null)) as ServerAuthSession | null;
-  if (!parsed?.user) {
-    return null;
-  }
-
-  return parsed;
+  return session as ServerAuthSession;
 }

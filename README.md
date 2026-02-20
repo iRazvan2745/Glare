@@ -3,9 +3,9 @@
 ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/iRazvan2745/Glare?utm_source=oss&utm_medium=github&utm_campaign=iRazvan2745%2FGlare&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
 
 Glare is a distributed backup control plane for multi-server environments.
-It provides a web UI, an API server, and worker agents that execute backups locally with `rustic`.
+It provides a web UI with embedded API routes, a background jobs service, and worker agents that execute backups locally with `rustic`.
 
-Workers are independent and do not require the API server to be online. The workers are not the ones scheduling the snapshots, instead they fetch the backup plans periodically and reports batched statistics.
+Workers are independent and do not require the control plane to be online. The workers are not the ones scheduling the snapshots, instead they fetch the backup plans periodically and report batched statistics.
 
 ## Why Glare?
 
@@ -15,8 +15,8 @@ Workers are independent and do not require the API server to be online. The work
 
 ## Architecture
 
-- `server`: API server (auth, worker sync, repositories, plans, runs/events, observability).
-- `web`: Control plane UI.
+- `web`: Control plane UI + API routes (auth, worker sync, repositories, plans, runs/events, observability).
+- `jobs`: background jobs process (migrations, startup checks, snapshot sync interval).
 - `worker`: Rust worker that executes backup jobs. (Requires a port)
 
 ## Install guide
@@ -30,11 +30,11 @@ Workers are independent and do not require the API server to be online. The work
   Generate one using:
   [https://www.better-auth.com/docs/installation#set-environment-variables](https://www.better-auth.com/docs/installation#set-environment-variables)
 
-* `CORS_ORIGIN`
-  Set this to the URL of the web app.
+* `NEXT_APP_URL`
+  Set this to the URL of the web app/API origin.
 
-* `BETTER_AUTH_URL`
-  Set this to the URL of the API server.
+* `APP_URL`
+  Set this to the URL of the web app/API origin.
 
 3. Start the stack:
 
@@ -59,7 +59,7 @@ The installer command will show up when you create one.
 
 ## API Documentation
 
-You can access it at ```http(s)://<API URL>/openapi```
+You can access it at ```http(s)://<WEB URL>/openapi```
 
 ## Advisory
 

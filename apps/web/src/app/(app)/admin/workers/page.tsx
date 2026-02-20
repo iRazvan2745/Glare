@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import {
   RiAddLine,
   RiLoader4Line,
@@ -90,7 +91,7 @@ export default function AdminWorkersPage() {
     setIsLoading(true);
     try {
       const data = await apiFetchJson<{ workers?: WorkerRecord[] }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
+        `${apiBaseUrl}/api/workers`,
         { method: "GET", retries: 1 },
       );
       setWorkers(data.workers ?? []);
@@ -110,7 +111,7 @@ export default function AdminWorkersPage() {
     setIsSaving(true);
     try {
       const data = await apiFetchJson<{ worker?: WorkerRecord; syncToken?: string }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
+        `${apiBaseUrl}/api/workers`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -144,7 +145,7 @@ export default function AdminWorkersPage() {
     setIsSaving(true);
     try {
       const data = await apiFetchJson<{ worker?: WorkerRecord }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${editingId}`,
+        `${apiBaseUrl}/api/workers/${editingId}`,
         {
           method: "PATCH",
           body: JSON.stringify({ name: editName.trim(), region: editRegion.trim() || null }),
@@ -165,7 +166,7 @@ export default function AdminWorkersPage() {
   async function deleteWorker(workerId: string) {
     setIsSaving(true);
     try {
-      await apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}`, {
+      await apiFetchJson(`${apiBaseUrl}/api/workers/${workerId}`, {
         method: "DELETE",
         retries: 1,
       });
@@ -182,7 +183,7 @@ export default function AdminWorkersPage() {
     setIsSaving(true);
     try {
       const data = await apiFetchJson<{ syncToken?: string }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}/rotate-sync-token`,
+        `${apiBaseUrl}/api/workers/${workerId}/rotate-sync-token`,
         { method: "POST", retries: 1 },
       );
       if (data.syncToken) setNewToken(data.syncToken);
