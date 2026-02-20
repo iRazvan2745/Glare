@@ -21,8 +21,6 @@ Workers are independent and do not require the API server to be online. The work
 
 ### Server and Web app
 
-> Works with docker aswell, but podman is cooler
-
 1. Copy the `podman-compose.yml` file.
 2. Update the required environment variables:
 
@@ -49,7 +47,9 @@ podman-compose down
 ```
 
 4. Reverse proxy:
-   Copy the contents of Caddyfile in /etc/caddy/Caddyfile
+   Copy the contents of [Caddyfile](https://github.com/iRazvan2745/Glare/blob/main/Caddyfile) in ```/etc/caddy/Caddyfile``` then run ```systemctl restart caddy```
+
+> Pdoman and caddy are not a dependecy but they are really cool
 
 ### Worker
 
