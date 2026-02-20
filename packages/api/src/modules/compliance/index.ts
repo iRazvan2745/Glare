@@ -8,7 +8,12 @@ function toCsvLine(fields: Array<string | number | null>) {
   return fields
     .map((field) => {
       const value = field == null ? "" : String(field);
-      if (value.includes(",") || value.includes("\n") || value.includes("\r") || value.includes('"')) {
+      if (
+        value.includes(",") ||
+        value.includes("\n") ||
+        value.includes("\r") ||
+        value.includes('"')
+      ) {
         return `"${value.replaceAll('"', '""')}"`;
       }
       return value;

@@ -12,7 +12,7 @@ import {
 } from "@remixicon/react";
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { toast } from "@/lib/toast";
-import { formatDistanceToNow } from 'date-fns';
+import { formatDistanceToNow } from "date-fns";
 import {
   ActionMenu,
   ControlPlaneEmptyState,
@@ -406,25 +406,22 @@ export default function BackupPlansPage() {
 
     setIsSaving(true);
     try {
-      const data = await apiFetchJson<{ plan?: BackupPlan }>(
-        `${apiBaseUrl}/api/rustic/plans`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            name: createForm.name.trim(),
-            repositoryId: createForm.repositoryId,
-            workerIds: createForm.workerIds,
-            cron: createForm.cron.trim(),
-            paths: parsedPathScript.value.paths,
-            workerPathRules: parsedPathScript.value.workerPathRules,
-            tags: parseTags(createForm.tagsInput),
-            dryRun: createForm.dryRun,
-            enabled: createForm.enabled,
-            ...retentionPayload(createForm),
-          }),
-          retries: 1,
-        },
-      );
+      const data = await apiFetchJson<{ plan?: BackupPlan }>(`${apiBaseUrl}/api/rustic/plans`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: createForm.name.trim(),
+          repositoryId: createForm.repositoryId,
+          workerIds: createForm.workerIds,
+          cron: createForm.cron.trim(),
+          paths: parsedPathScript.value.paths,
+          workerPathRules: parsedPathScript.value.workerPathRules,
+          tags: parseTags(createForm.tagsInput),
+          dryRun: createForm.dryRun,
+          enabled: createForm.enabled,
+          ...retentionPayload(createForm),
+        }),
+        retries: 1,
+      });
       if (data.plan) setPlans((current) => [data.plan!, ...current]);
 
       setIsCreateOpen(false);

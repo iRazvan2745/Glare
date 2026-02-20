@@ -291,13 +291,10 @@ function WorkersPageContent() {
       }
 
       try {
-        const data = await apiFetchJson<{ workers?: WorkerRecord[] }>(
-          `${apiBaseUrl}/api/workers`,
-          {
-            method: "GET",
-            retries: 1,
-          },
-        );
+        const data = await apiFetchJson<{ workers?: WorkerRecord[] }>(`${apiBaseUrl}/api/workers`, {
+          method: "GET",
+          retries: 1,
+        });
         const nextWorkers = data.workers ?? [];
         setWorkers(nextWorkers);
 

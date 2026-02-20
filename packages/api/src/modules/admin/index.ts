@@ -16,6 +16,19 @@ const updateWorkspaceSettingsType = type({
   "signupsEnabled?": "boolean",
 });
 
+const ROLE_RANK: Record<string, number> = {
+  viewer: 0,
+  member: 1,
+  operator: 1,
+  admin: 2,
+  owner: 3,
+};
+
+function roleRank(role: string | null | undefined) {
+  const normalized = (role ?? "member").trim().toLowerCase();
+  return ROLE_RANK[normalized] ?? 0;
+}
+
 async function getOrCreateWorkspaceSettings() {
   const existing = await db.query.workspaceSettings.findFirst({
     where: (table, { eq }) => eq(table.id, "default"),
@@ -67,11 +80,27 @@ export const adminRoutes = new Elysia()
       return status(400, { error: "Invalid payload" });
     }
     const updates = body as { name?: string; email?: string };
-    if (typeof updates.name === "string" && (updates.name.length < 1 || updates.name.length > 120)) {
+    if (
+      typeof updates.name === "string" &&
+      (updates.name.length < 1 || updates.name.length > 120)
+    ) {
       return status(400, { error: "Invalid payload" });
     }
     if (Object.keys(updates).length === 0) {
       return status(400, { error: "No fields to update" });
+    }
+
+    const targetUser = await db.query.user.findFirst({
+      where: eq(user.id, params.userId),
+      columns: { id: true, role: true },
+    });
+    if (!targetUser) {
+      return status(404, { error: "User not found" });
+    }
+    const requesterRoleRank = roleRank(authedUser?.role);
+    const targetRoleRank = roleRank(targetUser?.role);
+    if (targetRoleRank > requesterRoleRank) {
+      return status(403, { error: "Forbidden" });
     }
 
     if (updates.email) {
@@ -92,7 +121,8 @@ export const adminRoutes = new Elysia()
         .where(eq(user.id, params.userId))
         .returning({ id: user.id });
     } catch (error) {
-      const message = error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+      const message =
+        error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
       if (message.includes("unique") && message.includes("email")) {
         return status(409, { error: "Email already in use" });
       }
@@ -112,6 +142,20 @@ export const adminRoutes = new Elysia()
     if (authedUser.id === params.userId) {
       return status(400, { error: "Cannot delete your own account" });
     }
+
+    const targetUser = await db.query.user.findFirst({
+      where: eq(user.id, params.userId),
+      columns: { id: true, role: true },
+    });
+    if (!targetUser) {
+      return status(404, { error: "User not found" });
+    }
+    const requesterRoleRank = roleRank(authedUser?.role);
+    const targetRoleRank = roleRank(targetUser?.role);
+    if (targetRoleRank > requesterRoleRank) {
+      return status(403, { error: "Forbidden" });
+    }
+
     const deletedRows = await db
       .delete(user)
       .where(eq(user.id, params.userId))

@@ -1028,7 +1028,7 @@ export const workerRoutes = new Elysia()
     const runId = crypto.randomUUID();
     const startedAt = new Date(Date.now() - (parsedBody.data.durationMs ?? 0));
     const finishedAt = new Date();
-    
+
     await db.transaction(async (tx) => {
       await tx.insert(backupPlanRun).values({
         id: runId,
@@ -1061,7 +1061,9 @@ export const workerRoutes = new Elysia()
           planId: plan.id,
           workerId: auth.workerId,
           snapshotId: parsedBody.data.snapshotId ?? null,
-          snapshotTime: parsedBody.data.snapshotTime ? new Date(parsedBody.data.snapshotTime) : null,
+          snapshotTime: parsedBody.data.snapshotTime
+            ? new Date(parsedBody.data.snapshotTime)
+            : null,
           output: parsedBody.data.output ?? null,
         });
         if (metric) {
@@ -1325,57 +1327,63 @@ export const workerRoutes = new Elysia()
       return new Response(null, { status: 204 });
     }
 
-    const summaryResult = await db.$client.query(
-      `SELECT
-         COUNT(*)::int AS "totalCount",
-         SUM(CASE WHEN "status" = 'success' THEN 1 ELSE 0 END)::int AS "successCount",
-         SUM(CASE WHEN "status" = 'failed' THEN 1 ELSE 0 END)::int AS "failureCount",
-         SUM(CASE WHEN "status" IN ('pending', 'running') THEN 1 ELSE 0 END)::int AS "unfinishedCount",
-         MIN("started_at") AS "firstStartedAt",
-         MAX("finished_at") AS "lastFinishedAt",
-         MAX("error") FILTER (WHERE "status" = 'failed' AND "error" IS NOT NULL) AS "lastError"
-       FROM "backup_plan_run"
-       WHERE "run_group_id" = $1 AND "plan_id" = $2`,
-      [completionRow.runGroupId, completionRow.planId],
-    );
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        SELECT "id"
+        FROM "backup_plan"
+        WHERE "id" = ${completionRow.planId}
+        FOR UPDATE
+      `);
 
-    const summary = summaryResult.rows[0] as
-      | {
-          totalCount: number;
-          successCount: number;
-          failureCount: number;
-          unfinishedCount: number;
-          firstStartedAt: string | Date | null;
-          lastFinishedAt: string | Date | null;
-          lastError: string | null;
-        }
-      | undefined;
-    if (!summary || summary.unfinishedCount > 0) {
-      return new Response(null, { status: 204 });
-    }
+      const summaryResult = await tx.execute(sql`
+        SELECT
+          COUNT(*)::int AS "totalCount",
+          SUM(CASE WHEN "status" = 'success' THEN 1 ELSE 0 END)::int AS "successCount",
+          SUM(CASE WHEN "status" = 'failed' THEN 1 ELSE 0 END)::int AS "failureCount",
+          SUM(CASE WHEN "status" IN ('pending', 'running') THEN 1 ELSE 0 END)::int AS "unfinishedCount",
+          MIN("started_at") AS "firstStartedAt",
+          MAX("finished_at") AS "lastFinishedAt",
+          MAX("error") FILTER (WHERE "status" = 'failed' AND "error" IS NOT NULL) AS "lastError"
+        FROM "backup_plan_run"
+        WHERE "run_group_id" = ${completionRow.runGroupId} AND "plan_id" = ${completionRow.planId}
+      `);
 
-    const firstStartedAt = summary.firstStartedAt ? new Date(summary.firstStartedAt) : null;
-    const lastFinishedAt = summary.lastFinishedAt ? new Date(summary.lastFinishedAt) : null;
-    const durationMs =
-      firstStartedAt && lastFinishedAt
-        ? Math.max(0, lastFinishedAt.getTime() - firstStartedAt.getTime())
-        : null;
-    const finalStatus = summary.failureCount > 0 ? "failed" : "success";
-    const finalError =
-      summary.failureCount === 0
-        ? null
-        : summary.successCount === 0
-          ? summary.lastError || "Backup failed"
-          : `${summary.failureCount}/${summary.totalCount} workers failed`;
+      const summaryRow = summaryResult.rows[0] as Record<string, unknown> | undefined;
+      const unfinishedCount = Number(summaryRow?.unfinishedCount ?? 0);
+      if (!summaryRow || unfinishedCount > 0) {
+        return;
+      }
 
-    await db
-      .update(backupPlan)
-      .set({
-        lastStatus: finalStatus,
-        lastError: finalError,
-        lastDurationMs: durationMs,
-      })
-      .where(eq(backupPlan.id, completionRow.planId));
+      const totalCount = Number(summaryRow.totalCount ?? 0);
+      const successCount = Number(summaryRow.successCount ?? 0);
+      const failureCount = Number(summaryRow.failureCount ?? 0);
+      const firstStartedAtRaw = summaryRow.firstStartedAt as string | Date | null | undefined;
+      const lastFinishedAtRaw = summaryRow.lastFinishedAt as string | Date | null | undefined;
+      const lastError = summaryRow.lastError as string | null | undefined;
+
+      const firstStartedAt = firstStartedAtRaw ? new Date(firstStartedAtRaw) : null;
+      const lastFinishedAt = lastFinishedAtRaw ? new Date(lastFinishedAtRaw) : null;
+      const durationMs =
+        firstStartedAt && lastFinishedAt
+          ? Math.max(0, lastFinishedAt.getTime() - firstStartedAt.getTime())
+          : null;
+      const finalStatus = failureCount > 0 ? "failed" : "success";
+      const finalError =
+        failureCount === 0
+          ? null
+          : successCount === 0
+            ? lastError || "Backup failed"
+            : `${failureCount}/${totalCount} workers failed`;
+
+      await tx
+        .update(backupPlan)
+        .set({
+          lastStatus: finalStatus,
+          lastError: finalError,
+          lastDurationMs: durationMs,
+        })
+        .where(eq(backupPlan.id, completionRow.planId));
+    });
 
     return new Response(null, { status: 204 });
   })

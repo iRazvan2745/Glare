@@ -99,15 +99,17 @@ export const labelRoutes = new Elysia({ prefix: "/api" })
           value: item.value.trim(),
         }))
         .filter((item) => item.key.length > 0 && item.value.length > 0);
-      
+
       // Deduplicate by key+value combination while preserving order
       const seen = new Set<string>();
-      const deduplicated = cleaned.filter((item) => {
-        const combined = `${item.key}\0${item.value}`;
-        if (seen.has(combined)) return false;
-        seen.add(combined);
-        return true;
-      }).slice(0, 32);
+      const deduplicated = cleaned
+        .filter((item) => {
+          const combined = `${item.key}\0${item.value}`;
+          if (seen.has(combined)) return false;
+          seen.add(combined);
+          return true;
+        })
+        .slice(0, 32);
 
       await db.transaction(async (tx) => {
         await tx

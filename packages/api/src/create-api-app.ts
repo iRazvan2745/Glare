@@ -11,12 +11,7 @@ import { rusticRoutes } from "./modules/rustic/index";
 import { settingsRoutes } from "./modules/settings/index";
 import { statsRoutes } from "./modules/stats/index";
 import { workerRoutes } from "./modules/workers/index";
-import {
-  getRequestId,
-  logError,
-  logRequest,
-  markRequestStart,
-} from "./shared/logger";
+import { getRequestId, logError, logRequest, markRequestStart } from "./shared/logger";
 import { healthSnapshot } from "./shared/startup-health";
 
 export type ApiAppOptions = {

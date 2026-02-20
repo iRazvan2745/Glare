@@ -2,7 +2,12 @@ import { db } from "@glare/db";
 import { sql } from "drizzle-orm";
 import { logError, logInfo } from "./logger";
 
-const REQUIRED_ENV_KEYS = ["DATABASE_URL", "BETTER_AUTH_SECRET", "NEXT_APP_URL", "APP_URL"] as const;
+const REQUIRED_ENV_KEYS = [
+  "DATABASE_URL",
+  "BETTER_AUTH_SECRET",
+  "NEXT_APP_URL",
+  "APP_URL",
+] as const;
 
 function checkRequiredEnv() {
   const missing = REQUIRED_ENV_KEYS.filter((key) => {

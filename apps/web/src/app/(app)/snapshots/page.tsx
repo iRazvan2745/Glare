@@ -43,7 +43,6 @@ import {
   type SnapshotWorkerAttribution,
   type SnapshotListItem,
   type SnapshotActivity,
-  type SnapshotWsMessage,
   type FileEntry,
   type FileTreeNode,
   numberToSize,
@@ -57,7 +56,7 @@ import {
   parseTimestampMs,
   getSnapshotFileLoadHint,
   sanitizeWorkerErrorMessage,
-  buildSnapshotStreamWebSocketUrl,
+  buildSnapshotStreamSseUrl,
   monthKey,
   dayKey,
 } from "./_components/snapshot-helpers";
@@ -355,10 +354,9 @@ function SnapshotsPageContent() {
   useEffect(() => {
     if (!selectedRepositoryId) return;
     let isDisposed = false;
-    let websocket: WebSocket | null = null;
+    let eventSource: EventSource | null = null;
     let fallbackIntervalId: number | null = null;
     let reconnectTimeoutId: number | null = null;
-    let previousRunningCount = 0;
 
     const refreshSilently = (options?: { includeActivity?: boolean }) => {
       const includeActivity = options?.includeActivity ?? true;
@@ -388,70 +386,49 @@ function SnapshotsPageContent() {
       fallbackIntervalId = null;
     };
 
-    const connectWebSocket = () => {
+    const connectEventSource = () => {
       if (isDisposed) return;
 
-      const wsUrl = buildSnapshotStreamWebSocketUrl(
-        selectedRepositoryId,
-        apiBaseUrl,
-      );
-      if (!wsUrl) {
+      const sseUrl = buildSnapshotStreamSseUrl(selectedRepositoryId, apiBaseUrl);
+      if (!sseUrl) {
         ensureFallbackPolling();
         return;
       }
 
       try {
-        websocket = new WebSocket(wsUrl);
+        eventSource = new EventSource(sseUrl, { withCredentials: true });
       } catch {
         ensureFallbackPolling();
-        reconnectTimeoutId = window.setTimeout(connectWebSocket, 5_000);
+        reconnectTimeoutId = window.setTimeout(connectEventSource, 5_000);
         return;
       }
 
-      websocket.onopen = () => {
-        clearFallbackPolling();
-        refreshSilently({ includeActivity: false });
-      };
-      websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(String((event as MessageEvent).data ?? "")) as SnapshotWsMessage;
-          if (Array.isArray(data.activities)) {
-            const nextRunningCount = data.activities.filter(
-              (activity) => activity.kind === "running",
-            ).length;
-            setSnapshotActivity(data.activities);
-            if (previousRunningCount > 0 && nextRunningCount === 0) {
-              // A run likely finished; refresh snapshots/attribution once.
-              refreshSilently({ includeActivity: false });
-            }
-            previousRunningCount = nextRunningCount;
-            return;
-          }
-        } catch {
-          // Fall back to silent refresh if payload is malformed.
-        }
+      const onStreamEvent = () => {
         refreshSilently();
       };
-      websocket.onerror = () => {
-        ensureFallbackPolling();
+
+      eventSource.onopen = () => {
+        clearFallbackPolling();
+        refreshSilently();
       };
-      websocket.onclose = () => {
-        websocket = null;
+      eventSource.onmessage = onStreamEvent;
+      eventSource.addEventListener("ready", onStreamEvent);
+      eventSource.addEventListener("tick", onStreamEvent);
+      eventSource.onerror = () => {
         if (isDisposed) return;
         ensureFallbackPolling();
-        reconnectTimeoutId = window.setTimeout(connectWebSocket, 5_000);
       };
     };
 
-    connectWebSocket();
+    connectEventSource();
 
     const onVisibilityChange = () => refreshSilently();
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       isDisposed = true;
-      if (websocket) {
-        websocket.close();
+      if (eventSource) {
+        eventSource.close();
       }
       if (reconnectTimeoutId !== null) {
         window.clearTimeout(reconnectTimeoutId);

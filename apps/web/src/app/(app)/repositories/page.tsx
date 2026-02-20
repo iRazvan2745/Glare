@@ -960,7 +960,7 @@ export default function RepositoriesPage() {
           queryKey: ["repo-storage", r.id],
           queryFn: () =>
             apiFetchJson<{ rclone?: { parsedJson?: { bytes?: number } | null } }>(
-              `/api/rustic/repository-size?remote=${encodeURIComponent(remote)}`,
+              `${apiBaseUrl}/api/rustic/repository-size?remote=${encodeURIComponent(remote)}`,
             ).then((data) => data?.rclone?.parsedJson?.bytes ?? null),
           staleTime: 5 * 60 * 1000,
         };

@@ -26,15 +26,15 @@ Workers are independent and do not require the control plane to be online. The w
 1. Copy the `podman-compose.yml` file.
 2. Update the required environment variables:
 
-* `BETTER_AUTH_SECRET`
+- `BETTER_AUTH_SECRET`
   Generate one using:
   [https://www.better-auth.com/docs/installation#set-environment-variables](https://www.better-auth.com/docs/installation#set-environment-variables)
 
-* `NEXT_APP_URL`
+- `NEXT_APP_URL`
   Set this to the URL of the web app/API origin. Used by the Next.js runtime and client-side code.
   Example: `https://app.example.com`
 
-* `APP_URL`
+- `APP_URL`
   Set this to the URL of the web app/API origin. Used by server-side code and auth components (Better Auth).
   This can be the same as `NEXT_APP_URL` for single-domain setups.
   Example: `https://app.example.com`
@@ -52,7 +52,7 @@ podman compose down
 ```
 
 4. Reverse proxy:
-   Copy the contents of [Caddyfile](https://github.com/iRazvan2745/Glare/blob/main/Caddyfile) in ```/etc/caddy/Caddyfile``` then run ```systemctl restart caddy```
+   Copy the contents of [Caddyfile](https://github.com/iRazvan2745/Glare/blob/main/Caddyfile) in `/etc/caddy/Caddyfile` then run `systemctl restart caddy`
 
 > Podman and caddy are not a required but they are really cool
 
@@ -62,7 +62,7 @@ The installer command will show up when you create one.
 
 ## API Documentation
 
-You can access it at ```http(s)://<your-web-url>/openapi``` where `<your-web-url>` is the value you set for `NEXT_APP_URL` or `APP_URL`
+You can access it at `http(s)://<your-web-url>/openapi` where `<your-web-url>` is the value you set for `NEXT_APP_URL` or `APP_URL`
 
 ## Advisory
 

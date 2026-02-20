@@ -43,8 +43,6 @@ const errorResponseSchema = t.Object({
   error: t.String(),
 });
 
-const snapshotWsTickIntervals = new Map<string, ReturnType<typeof setInterval>>();
-
 const rusticWorkerStatsSchema = t.Object({
   id: t.String({ format: "uuid" }),
   name: t.String(),
@@ -150,7 +148,6 @@ const rusticEndpointsSchema = t.Object({
     listRepositorySnapshots: t.String(),
     listRepositorySnapshotWorkers: t.String(),
     streamRepositorySnapshotUpdates: t.String(),
-    streamRepositorySnapshotUpdatesWs: t.String(),
     listSnapshotFiles: t.String(),
     checkRepository: t.String(),
     repairRepositoryIndex: t.String(),
@@ -2255,7 +2252,8 @@ async function proxyToWorker(
 ) {
   const url = `${endpoint.replace(/\/+$/, "")}${path}`;
   const timeoutMsRaw = Number(process.env.WORKER_PROXY_TIMEOUT_MS ?? 10_000);
-  const timeoutMs = Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.floor(timeoutMsRaw) : 10_000;
+  const timeoutMs =
+    Number.isFinite(timeoutMsRaw) && timeoutMsRaw > 0 ? Math.floor(timeoutMsRaw) : 10_000;
   const controller = new AbortController();
   const timeoutHandle = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -3293,7 +3291,6 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
           listRepositorySnapshots: "/api/rustic/repositories/:id/snapshots",
           listRepositorySnapshotWorkers: "/api/rustic/repositories/:id/snapshot-workers",
           streamRepositorySnapshotUpdates: "/api/rustic/repositories/:id/snapshot-stream",
-          streamRepositorySnapshotUpdatesWs: "/api/rustic/repositories/:id/snapshot-ws",
           listSnapshotFiles: "/api/rustic/repositories/:id/snapshot/files",
           checkRepository: "/api/rustic/repositories/:id/check",
           repairRepositoryIndex: "/api/rustic/repositories/:id/repair-index",
@@ -4276,64 +4273,6 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
       },
     },
   )
-  .ws("/rustic/repositories/:id/snapshot-ws", {
-    params: t.Object({ id: t.String({ format: "uuid" }) }),
-    open: async (ws) => {
-      const user = await getAuthenticatedUser(ws.data.request);
-      if (!user) {
-        ws.close(1008, "Unauthorized");
-        return;
-      }
-
-      const parsedRepositoryId = repositoryIdSchema.safeParse(ws.data.params.id);
-      if (!parsedRepositoryId.success) {
-        ws.close(1008, "Invalid repository id");
-        return;
-      }
-
-      const repository = await db.query.rusticRepository.findFirst({
-        where: (table, { and: dbAnd, eq: dbEq }) =>
-          dbAnd(dbEq(table.id, parsedRepositoryId.data), dbEq(table.userId, user.id)),
-        columns: { id: true },
-      });
-      if (!repository) {
-        ws.close(1008, "Repository not found");
-        return;
-      }
-
-      const pushActivity = async (event: "ready" | "tick") => {
-        try {
-          const activity = await getRepositorySnapshotActivityForUser(user.id, repository.id);
-          ws.send(
-            JSON.stringify({
-              event,
-              ts: Date.now(),
-              repositoryId: repository.id,
-              activities: activity.activities,
-            }),
-          );
-        } catch (error) {
-          logWarn("snapshot websocket push failed", {
-            repositoryId: repository.id,
-            error: error instanceof Error ? error.message : String(error),
-          });
-        }
-      };
-
-      await pushActivity("ready");
-      const intervalId = setInterval(() => {
-        void pushActivity("tick");
-      }, 1_000);
-      snapshotWsTickIntervals.set(ws.id, intervalId);
-    },
-    close: (ws) => {
-      const intervalId = snapshotWsTickIntervals.get(ws.id);
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-      snapshotWsTickIntervals.delete(ws.id);
-    },
-  })
   .get(
     "/rustic/repositories/:id/snapshot-activity",
     async ({ request, params, status }) => {
@@ -6183,8 +6122,8 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
         : repository.repository;
 
       try {
-        // For single snapshot forget, we use rustic forget <snapshotId> --prune
-        // We pass keepLast=0 and the snapshot ID in the request
+        // For single-snapshot forget/prune, send both snapshotId and snapshotIds
+        // with prune enabled so worker implementations can consume either shape.
         const forgetBody: Record<string, unknown> = {
           backend: forgetBackend,
           options: forgetOptions,

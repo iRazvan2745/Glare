@@ -90,10 +90,10 @@ export default function AdminWorkersPage() {
     }
     setIsLoading(true);
     try {
-      const data = await apiFetchJson<{ workers?: WorkerRecord[] }>(
-        `${apiBaseUrl}/api/workers`,
-        { method: "GET", retries: 1 },
-      );
+      const data = await apiFetchJson<{ workers?: WorkerRecord[] }>(`${apiBaseUrl}/api/workers`, {
+        method: "GET",
+        retries: 1,
+      });
       setWorkers(data.workers ?? []);
     } catch {
       toast.error("Could not load workers.");

@@ -37,13 +37,22 @@ const settingsSchema = {
           return { success: false as const, reason: "Discord webhook URL must use https" };
         }
         const hostname = url.hostname.toLowerCase();
-        const isDiscordDomain = hostname === "discord.com" || hostname === "discordapp.com" || 
-                               hostname.endsWith(".discord.com") || hostname.endsWith(".discordapp.com");
+        const isDiscordDomain =
+          hostname === "discord.com" ||
+          hostname === "discordapp.com" ||
+          hostname.endsWith(".discord.com") ||
+          hostname.endsWith(".discordapp.com");
         if (!isDiscordDomain) {
-          return { success: false as const, reason: "Discord webhook URL must be a discord.com or discordapp.com webhook" };
+          return {
+            success: false as const,
+            reason: "Discord webhook URL must be a discord.com or discordapp.com webhook",
+          };
         }
         if (!url.pathname.startsWith("/api/webhooks/")) {
-          return { success: false as const, reason: "Discord webhook URL must be a valid Discord webhook URL" };
+          return {
+            success: false as const,
+            reason: "Discord webhook URL must be a valid Discord webhook URL",
+          };
         }
       } catch {
         return { success: false as const, reason: "Discord webhook URL is invalid" };
@@ -99,10 +108,13 @@ export const settingsRoutes = new Elysia()
       };
     }
 
-    await db.insert(userSettings).values({
-      userId: user.id,
-      ...defaultSettings,
-    }).onConflictDoNothing({ target: userSettings.userId });
+    await db
+      .insert(userSettings)
+      .values({
+        userId: user.id,
+        ...defaultSettings,
+      })
+      .onConflictDoNothing({ target: userSettings.userId });
 
     const fetchedSettings = await db.query.userSettings.findFirst({
       where: (table, { eq }) => eq(table.userId, user.id),

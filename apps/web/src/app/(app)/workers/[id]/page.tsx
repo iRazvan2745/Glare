@@ -63,7 +63,7 @@ type SyncEventsResponse = {
 
 // ─── Constants ───────────────────────────────────────────────────────────────
 
-const RANGE_TO_HOURS: Record<TimeRange, number> = { "1h": 1, "6h": 6, "24h": 96, "7d": 24 * 7 };
+const RANGE_TO_HOURS: Record<TimeRange, number> = { "1h": 1, "6h": 6, "24h": 24, "7d": 24 * 7 };
 const RANGE_TO_BUCKETS: Record<TimeRange, number> = { "1h": 18, "6h": 48, "24h": 24, "7d": 168 };
 const RANGE_TO_EVENT_LIMIT: Record<TimeRange, number> = {
   "1h": 180,

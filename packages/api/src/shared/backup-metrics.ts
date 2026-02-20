@@ -373,7 +373,7 @@ export async function detectBackupSizeAnomaly(input: {
 
   const anomalyId = crypto.randomUUID();
   const reason = input.actualBytes > median ? "larger_than_expected" : "smaller_than_expected";
-  await db.insert(backupSizeAnomaly).values({
+  const inserted = await db.insert(backupSizeAnomaly).values({
     id: anomalyId,
     metricId: input.metricId,
     userId: input.userId,
@@ -387,7 +387,22 @@ export async function detectBackupSizeAnomaly(input: {
     reason,
     detectedAt: new Date(),
     resolvedAt: null,
+  }).catch((error) => {
+    logWarn("failed to insert backup size anomaly", {
+      anomalyId,
+      metricId: input.metricId,
+      userId: input.userId,
+      planId: input.planId,
+      repositoryId: input.repositoryId,
+      actualBytes: input.actualBytes,
+      expectedBytes: Math.floor(median),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return null;
   });
+  if (!inserted) {
+    return null;
+  }
 
   return {
     id: anomalyId,

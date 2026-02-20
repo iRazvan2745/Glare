@@ -161,13 +161,10 @@ export default function RepositoryInfoPage() {
 
     setIsInitLoading(true);
     try {
-      await apiFetchJson(
-        `${apiBaseUrl}/api/rustic/repositories/${repository.id}/init`,
-        {
-          method: "POST",
-          retries: 1,
-        },
-      );
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${repository.id}/init`, {
+        method: "POST",
+        retries: 1,
+      });
 
       setRepository((current) =>
         current

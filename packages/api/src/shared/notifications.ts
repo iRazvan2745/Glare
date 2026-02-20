@@ -48,8 +48,11 @@ function isValidDiscordWebhookUrl(webhookUrl: string): boolean {
     const url = new URL(webhookUrl);
     if (url.protocol !== "https:") return false;
     const hostname = url.hostname.toLowerCase();
-    const isDiscordDomain = hostname === "discord.com" || hostname === "discordapp.com" ||
-                           hostname.endsWith(".discord.com") || hostname.endsWith(".discordapp.com");
+    const isDiscordDomain =
+      hostname === "discord.com" ||
+      hostname === "discordapp.com" ||
+      hostname.endsWith(".discord.com") ||
+      hostname.endsWith(".discordapp.com");
     if (!isDiscordDomain) return false;
     if (!url.pathname.startsWith("/api/webhooks/")) return false;
     return true;
