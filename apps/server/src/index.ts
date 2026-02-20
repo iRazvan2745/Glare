@@ -23,7 +23,6 @@ import {
 import { startSnapshotSyncInterval } from "./shared/snapshot-sync";
 import { healthSnapshot, verifyStartupHealth } from "./shared/startup-health";
 import openapi from "@elysiajs/openapi";
-import type { url } from "arktype/internal/keywords/string.ts";
 
 function getPostgresErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null) {

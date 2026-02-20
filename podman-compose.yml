@@ -20,6 +20,7 @@ services:
   server:
     image: ghcr.io/iRazvan2745/glare-server
     container_name: glare-server
+    command: ["bun", "run", "apps/server/dist/index.mjs"]
     environment:
       DATABASE_URL: postgresql://postgres:password@postgres:5432/glare
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me}
