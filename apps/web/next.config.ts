@@ -4,7 +4,6 @@ import type { NextConfig } from "next";
 const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ?? "";
 
 const nextConfig: NextConfig = {
-  output: "standalone",
   typedRoutes: true,
   reactCompiler: true,
   async rewrites() {
