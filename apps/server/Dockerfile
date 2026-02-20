@@ -12,4 +12,4 @@ RUN bun install --frozen-lockfile
 
 EXPOSE 3000
 
-CMD ["sh", "-lc", "bun run db:init && bun run apps/server/index.ts"]
+CMD ["sh", "-lc", "bun run db:init && bun run apps/server/src/index.ts"]
