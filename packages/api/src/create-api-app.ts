@@ -31,10 +31,21 @@ export function createApiApp(options: ApiAppOptions = {}) {
       markRequestStart(request);
     })
     .onError(({ request, error, set }) => {
+      const requestId = getRequestId(request);
+      if (requestId) {
+        set.headers["x-request-id"] = requestId;
+      }
+      let path = request.url;
+      try {
+        path = new URL(request.url).pathname;
+      } catch {
+        path = request.url;
+      }
+      logRequest(request, set.status);
       logError("request handler error", {
-        requestId: getRequestId(request),
+        requestId,
         method: request.method,
-        path: new URL(request.url).pathname,
+        path,
         status: set.status,
         error: error instanceof Error ? error.message : String(error),
       });
@@ -49,7 +60,7 @@ export function createApiApp(options: ApiAppOptions = {}) {
     .use(
       cors({
         origin: corsOrigin,
-        methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allowedHeaders: ["Content-Type", "Authorization"],
         credentials: true,
       }),

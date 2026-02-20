@@ -627,7 +627,7 @@ export default function BackupPlansPage() {
         />
         <KpiStat
           label="Next run (soonest)"
-          value={nextRunSoonest ? formatDistanceToNow(new Date(nextRunSoonest).toISOString()) : "—"}
+          value={nextRunSoonest ? formatDistanceToNow(nextRunSoonest, { addSuffix: true }) : "—"}
           icon={RiCalendarScheduleLine}
           color="violet"
         />

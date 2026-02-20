@@ -125,9 +125,12 @@ export default function ObservabilityPage() {
     queryKey: ["observability-overview", session?.user?.id ?? "anonymous", range],
     enabled: Boolean(session?.user),
     queryFn: () =>
-      apiFetchJson<OverviewResponse>(`${apiBaseUrl}/api/observability/overview?range=${range}`, {
-        method: "GET",
-      }),
+      apiFetchJson<OverviewResponse>(
+        `${apiBaseUrl}/api/observability/overview?range=${encodeURIComponent(range)}`,
+        {
+          method: "GET",
+        },
+      ),
   });
 
   const eventsQuery = useQuery({
@@ -135,7 +138,7 @@ export default function ObservabilityPage() {
     enabled: Boolean(session?.user),
     queryFn: () =>
       apiFetchJson<EventsResponse>(
-        `${apiBaseUrl}/api/observability/events?severity=${severity}&status=${status}&limit=${pageSize}&offset=${offset}`,
+        `${apiBaseUrl}/api/observability/events?severity=${encodeURIComponent(severity)}&status=${encodeURIComponent(status)}&limit=${pageSize}&offset=${offset}`,
         { method: "GET" },
       ),
   });

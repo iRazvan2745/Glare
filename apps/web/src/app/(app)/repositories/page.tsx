@@ -955,24 +955,27 @@ export default function RepositoriesPage() {
     queries: repositories
       .filter((r) => r.isInitialized && r.options["s3.bucket"])
       .map((r) => {
-        const remote = `glare-${r.id.split("-")[0]}:${r.options["s3.bucket"]}`;
+        const remote = `glare-${r.id.replace(/-/g, "")}:${r.options["s3.bucket"]}`;
         return {
           queryKey: ["repo-storage", r.id],
           queryFn: () =>
             apiFetchJson<{ rclone?: { parsedJson?: { bytes?: number } | null } }>(
               `${apiBaseUrl}/api/rustic/repository-size?remote=${encodeURIComponent(remote)}`,
-            ).then((data) => data?.rclone?.parsedJson?.bytes ?? null),
+            ).then((data) => ({ repoId: r.id, bytes: data?.rclone?.parsedJson?.bytes ?? null })),
           staleTime: 5 * 60 * 1000,
         };
       }),
   });
 
   const storageBytesById = useMemo(() => {
-    const initialized = repositories.filter((r) => r.isInitialized && r.options["s3.bucket"]);
     return Object.fromEntries(
-      initialized.map((r, i) => [r.id, storageSizeQueries[i]?.data ?? null]),
+      storageSizeQueries
+        .map((query) =>
+          query.data?.repoId ? ([query.data.repoId, query.data.bytes] as const) : null,
+        )
+        .filter((entry): entry is readonly [string, number | null] => entry !== null),
     );
-  }, [repositories, storageSizeQueries]);
+  }, [storageSizeQueries]);
 
   // Data loading
   const loadData = useCallback(async () => {

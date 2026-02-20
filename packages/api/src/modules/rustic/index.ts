@@ -2358,7 +2358,7 @@ async function createBackupEvent(input: {
   });
 
   if ((input.severity ?? "error") === "error" || input.type.includes("failed")) {
-    await sendDiscordNotification({
+    const delivered = await sendDiscordNotification({
       userId: input.userId,
       category: "backup_failures",
       title: "Backup event reported",
@@ -2371,6 +2371,15 @@ async function createBackupEvent(input: {
         ...(input.workerId ? [{ name: "Worker ID", value: input.workerId }] : []),
       ],
     });
+    if (!delivered) {
+      logWarn("backup event notification not delivered", {
+        userId: input.userId,
+        category: "backup_failures",
+        type: input.type,
+        repositoryId: input.repositoryId,
+        planId: input.planId ?? null,
+      });
+    }
   }
 }
 

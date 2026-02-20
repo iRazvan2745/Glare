@@ -16,7 +16,7 @@ type DiscordNotificationInput = {
   fields?: Array<{ name: string; value: string }>;
 };
 
-function shouldSendForCategory(
+export function shouldSendForCategory(
   category: NotificationCategory,
   settings: {
     notifyOnBackupFailures: boolean;
@@ -42,7 +42,7 @@ function severityColor(severity: NotificationSeverity) {
   return 0x57f287;
 }
 
-function isValidDiscordWebhookUrl(webhookUrl: string): boolean {
+export function isValidDiscordWebhookUrl(webhookUrl: string): boolean {
   if (!webhookUrl) return false;
   try {
     const url = new URL(webhookUrl);

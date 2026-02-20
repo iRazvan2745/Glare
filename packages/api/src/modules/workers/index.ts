@@ -706,7 +706,7 @@ export const workerRoutes = new Elysia()
 
     await db.delete(worker).where(eq(worker.id, existingWorker.id));
 
-    return new Response(null, { status: 204 });
+    return status(204);
   })
   .get("/api/workers/:id/sync-events", async ({ request, params, query, status }) => {
     const user = await getAuthenticatedUser(request);
@@ -876,7 +876,7 @@ export const workerRoutes = new Elysia()
       previousWorkerState.status !== parsed.data.status &&
       parsed.data.status === "degraded"
     ) {
-      await sendDiscordNotification({
+      const delivered = await sendDiscordNotification({
         userId: previousWorkerState.userId,
         category: "worker_health",
         title: "Worker degraded",
@@ -889,9 +889,16 @@ export const workerRoutes = new Elysia()
           { name: "Current status", value: parsed.data.status },
         ],
       });
+      if (!delivered) {
+        logWarn("worker degraded notification not delivered", {
+          userId: previousWorkerState.userId,
+          category: "worker_health",
+          workerId: previousWorkerState.id,
+        });
+      }
     }
 
-    return new Response(null, { status: 204 });
+    return status(204);
   })
   .post("/api/workers/backup-plans/sync", async ({ request, status }) => {
     const auth = await authenticateWorkerFromSyncToken(request.headers);
@@ -1047,55 +1054,6 @@ export const workerRoutes = new Elysia()
         finishedAt,
       });
 
-      if (parsedBody.data.status === "success") {
-        await recordStorageUsageSample({
-          userId: plan.userId,
-          repositoryId: plan.repositoryId,
-          runId,
-          output: parsedBody.data.output ?? null,
-        });
-        const metric = await recordBackupMetric({
-          runId,
-          userId: plan.userId,
-          repositoryId: plan.repositoryId,
-          planId: plan.id,
-          workerId: auth.workerId,
-          snapshotId: parsedBody.data.snapshotId ?? null,
-          snapshotTime: parsedBody.data.snapshotTime
-            ? new Date(parsedBody.data.snapshotTime)
-            : null,
-          output: parsedBody.data.output ?? null,
-        });
-        if (metric) {
-          const anomaly = await detectBackupSizeAnomaly({
-            metricId: metric.id,
-            userId: plan.userId,
-            planId: plan.id,
-            repositoryId: plan.repositoryId,
-            actualBytes: metric.bytesAdded,
-          });
-          if (anomaly) {
-            await tx.insert(backupEvent).values({
-              id: crypto.randomUUID(),
-              userId: plan.userId,
-              repositoryId: plan.repositoryId,
-              planId: plan.id,
-              runId,
-              workerId: auth.workerId,
-              type: "backup_size_anomaly",
-              status: "open",
-              severity: anomaly.severity,
-              message: `Backup size anomaly detected (${anomaly.reason})`,
-              detailsJson: JSON.stringify({
-                expectedBytes: anomaly.expectedBytes,
-                actualBytes: metric.bytesAdded,
-                score: anomaly.score,
-              }),
-            });
-          }
-        }
-      }
-
       await tx.insert(backupEvent).values({
         id: crypto.randomUUID(),
         userId: plan.userId,
@@ -1117,8 +1075,55 @@ export const workerRoutes = new Elysia()
       });
     });
 
+    if (parsedBody.data.status === "success") {
+      await recordStorageUsageSample({
+        userId: plan.userId,
+        repositoryId: plan.repositoryId,
+        runId,
+        output: parsedBody.data.output ?? null,
+      });
+      const metric = await recordBackupMetric({
+        runId,
+        userId: plan.userId,
+        repositoryId: plan.repositoryId,
+        planId: plan.id,
+        workerId: auth.workerId,
+        snapshotId: parsedBody.data.snapshotId ?? null,
+        snapshotTime: parsedBody.data.snapshotTime ? new Date(parsedBody.data.snapshotTime) : null,
+        output: parsedBody.data.output ?? null,
+      });
+      if (metric) {
+        const anomaly = await detectBackupSizeAnomaly({
+          metricId: metric.id,
+          userId: plan.userId,
+          planId: plan.id,
+          repositoryId: plan.repositoryId,
+          actualBytes: metric.bytesAdded,
+        });
+        if (anomaly) {
+          await db.insert(backupEvent).values({
+            id: crypto.randomUUID(),
+            userId: plan.userId,
+            repositoryId: plan.repositoryId,
+            planId: plan.id,
+            runId,
+            workerId: auth.workerId,
+            type: "backup_size_anomaly",
+            status: "open",
+            severity: anomaly.severity,
+            message: `Backup size anomaly detected (${anomaly.reason})`,
+            detailsJson: JSON.stringify({
+              expectedBytes: anomaly.expectedBytes,
+              actualBytes: metric.bytesAdded,
+              score: anomaly.score,
+            }),
+          });
+        }
+      }
+    }
+
     if (parsedBody.data.status === "failed") {
-      await sendDiscordNotification({
+      const delivered = await sendDiscordNotification({
         userId: plan.userId,
         category: "backup_failures",
         title: "Backup plan run failed",
@@ -1130,6 +1135,14 @@ export const workerRoutes = new Elysia()
           { name: "Worker ID", value: auth.workerId },
         ],
       });
+      if (!delivered) {
+        logWarn("backup failure notification not delivered", {
+          userId: plan.userId,
+          category: "backup_failures",
+          planId: plan.id,
+          workerId: auth.workerId,
+        });
+      }
     }
 
     await db
@@ -1144,7 +1157,7 @@ export const workerRoutes = new Elysia()
       })
       .where(eq(backupPlan.id, plan.id));
 
-    return new Response(null, { status: 204 });
+    return status(204);
   })
   .post("/api/workers/backup-runs/claim", async ({ request, body, status }) => {
     const auth = await authenticateWorkerFromSyncToken(request.headers);
@@ -1324,7 +1337,7 @@ export const workerRoutes = new Elysia()
     }
 
     if (!completionRow.runGroupId) {
-      return new Response(null, { status: 204 });
+      return status(204);
     }
 
     await db.transaction(async (tx) => {
@@ -1378,6 +1391,7 @@ export const workerRoutes = new Elysia()
       await tx
         .update(backupPlan)
         .set({
+          lastRunAt: lastFinishedAt,
           lastStatus: finalStatus,
           lastError: finalError,
           lastDurationMs: durationMs,
@@ -1385,7 +1399,7 @@ export const workerRoutes = new Elysia()
         .where(eq(backupPlan.id, completionRow.planId));
     });
 
-    return new Response(null, { status: 204 });
+    return status(204);
   })
   .post("/api/workers/:id/rotate-sync-token", async ({ request, params, status }) => {
     const user = await getAuthenticatedUser(request);

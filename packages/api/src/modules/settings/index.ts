@@ -3,7 +3,11 @@ import { userSettings } from "@glare/db/schema/settings";
 import { type } from "arktype";
 import { Elysia } from "elysia";
 import { getAuthenticatedUser } from "../../shared/auth/session";
-import { sendDiscordNotification } from "../../shared/notifications";
+import {
+  isValidDiscordWebhookUrl,
+  sendDiscordNotification,
+  shouldSendForCategory,
+} from "../../shared/notifications";
 
 const settingsType = type({
   "productUpdates?": "boolean",
@@ -36,22 +40,10 @@ const settingsSchema = {
         if (url.protocol !== "https:") {
           return { success: false as const, reason: "Discord webhook URL must use https" };
         }
-        const hostname = url.hostname.toLowerCase();
-        const isDiscordDomain =
-          hostname === "discord.com" ||
-          hostname === "discordapp.com" ||
-          hostname.endsWith(".discord.com") ||
-          hostname.endsWith(".discordapp.com");
-        if (!isDiscordDomain) {
+        if (!isValidDiscordWebhookUrl(webhookUrl)) {
           return {
             success: false as const,
             reason: "Discord webhook URL must be a discord.com or discordapp.com webhook",
-          };
-        }
-        if (!url.pathname.startsWith("/api/webhooks/")) {
-          return {
-            success: false as const,
-            reason: "Discord webhook URL must be a valid Discord webhook URL",
           };
         }
       } catch {
@@ -170,10 +162,19 @@ export const settingsRoutes = new Elysia()
 
     const currentSettings = await db.query.userSettings.findFirst({
       where: (table, { eq }) => eq(table.userId, user.id),
-      columns: { discordWebhookEnabled: true, discordWebhookUrl: true },
+      columns: {
+        discordWebhookEnabled: true,
+        discordWebhookUrl: true,
+        notifyOnBackupFailures: true,
+        notifyOnWorkerHealth: true,
+        notifyOnRepoChanges: true,
+      },
     });
     if (!currentSettings?.discordWebhookEnabled || !currentSettings.discordWebhookUrl?.trim()) {
       return status(422, { error: "Discord webhook not configured or disabled" });
+    }
+    if (!shouldSendForCategory("backup_failures", currentSettings)) {
+      return status(204);
     }
 
     try {

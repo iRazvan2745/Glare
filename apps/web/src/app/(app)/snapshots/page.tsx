@@ -36,7 +36,6 @@ import { parseAsBoolean, parseAsString, useQueryState } from "nuqs";
 import { Spinner } from "@/components/ui/spinner";
 
 import {
-  API_BASE,
   type WorkerRecord,
   type RepositoryRecord,
   type SnapshotRecord,
@@ -144,7 +143,7 @@ function SnapshotsPageContent() {
     try {
       const data = await apiFetchJson<{
         repositories?: RepositoryRecord[];
-      }>(`${API_BASE}/rustic/repositories`, {
+      }>(`${apiBaseUrl}/api/rustic/repositories`, {
         method: "GET",
         retries: 1,
       });
@@ -187,7 +186,7 @@ function SnapshotsPageContent() {
             parsed_json?: unknown;
             stdout?: string;
           };
-        }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshots`, {
+        }>(`${apiBaseUrl}/api/rustic/repositories/${repositoryId}/snapshots`, {
           method: "POST",
           retries: 1,
         });
@@ -229,7 +228,7 @@ function SnapshotsPageContent() {
       try {
         const data = await apiFetchJson<{
           snapshots?: SnapshotWorkerAttribution[];
-        }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshot-workers`, {
+        }>(`${apiBaseUrl}/api/rustic/repositories/${repositoryId}/snapshot-workers`, {
           method: "GET",
           retries: 1,
         });
@@ -264,7 +263,7 @@ function SnapshotsPageContent() {
       try {
         const data = await apiFetchJson<{
           activities?: SnapshotActivity[];
-        }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshot-activity`, {
+        }>(`${apiBaseUrl}/api/rustic/repositories/${repositoryId}/snapshot-activity`, {
           method: "GET",
           retries: 1,
         });
@@ -311,7 +310,7 @@ function SnapshotsPageContent() {
             parsed_json?: unknown;
             stdout?: string;
           };
-        }>(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/snapshot/files`, {
+        }>(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/snapshot/files`, {
           method: "POST",
           body: JSON.stringify({
             snapshot: normalizedSnapshotId,
@@ -408,6 +407,10 @@ function SnapshotsPageContent() {
       };
 
       eventSource.onopen = () => {
+        if (reconnectTimeoutId !== null) {
+          window.clearTimeout(reconnectTimeoutId);
+          reconnectTimeoutId = null;
+        }
         clearFallbackPolling();
         refreshSilently();
       };
@@ -417,6 +420,16 @@ function SnapshotsPageContent() {
       eventSource.onerror = () => {
         if (isDisposed) return;
         ensureFallbackPolling();
+        if (reconnectTimeoutId !== null) return;
+        reconnectTimeoutId = window.setTimeout(() => {
+          reconnectTimeoutId = null;
+          if (isDisposed) return;
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          connectEventSource();
+        }, 10_000);
       };
     };
 
@@ -809,7 +822,7 @@ function SnapshotsPageContent() {
 
     setIsRunningRepositoryCheck(true);
     try {
-      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/check`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/check`, {
         method: "POST",
         body: JSON.stringify({
           workerId: selectedSnapshotWorkerId || undefined,
@@ -833,7 +846,7 @@ function SnapshotsPageContent() {
 
     setIsRunningRepositoryRepairIndex(true);
     try {
-      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/repair-index`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/repair-index`, {
         method: "POST",
         body: JSON.stringify({
           workerId: selectedSnapshotWorkerId || undefined,
@@ -864,7 +877,7 @@ function SnapshotsPageContent() {
     try {
       const result = await apiFetchJson<{
         summary: { added: number; removed: number; changed: number };
-      }>(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/snapshot/diff`, {
+      }>(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/snapshot/diff`, {
         method: "POST",
         body: JSON.stringify({
           fromSnapshot: previousSnapshot.id,
@@ -894,7 +907,7 @@ function SnapshotsPageContent() {
 
     setIsRestoringSnapshot(true);
     try {
-      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/restore`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/restore`, {
         method: "POST",
         body: JSON.stringify({
           snapshot: selectedSnapshot.id,
@@ -916,7 +929,7 @@ function SnapshotsPageContent() {
       if (!selectedRepositoryId) return [];
       try {
         const data = await apiFetchJson<{ dirs?: string[] }>(
-          `${API_BASE}/rustic/repositories/${selectedRepositoryId}/ls-dirs`,
+          `${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/ls-dirs`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -960,7 +973,7 @@ function SnapshotsPageContent() {
 
     setIsTriggeringBackup(true);
     try {
-      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/backup`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/backup`, {
         method: "POST",
         body: JSON.stringify({
           workerId: manualWorkerId,
@@ -1364,7 +1377,7 @@ function SnapshotsPageContent() {
                 if (!selectedRepositoryId) return;
                 try {
                   await apiFetchJson(
-                    `${API_BASE}/rustic/repositories/${selectedRepositoryId}/forget-snapshot`,
+                    `${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/forget-snapshot`,
                     {
                       method: "POST",
                       body: JSON.stringify({

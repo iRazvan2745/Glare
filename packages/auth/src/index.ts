@@ -5,22 +5,17 @@ import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin } from "better-auth/plugins/admin";
 import { lastLoginMethod } from "better-auth/plugins";
 
-const configuredServerBaseUrl =
+const isProduction = process.env.NODE_ENV === "production";
+const configuredBaseUrl =
   process.env.NEXT_APP_URL ||
   process.env.APP_URL ||
   process.env.BETTER_AUTH_BASE_URL ||
   process.env.BETTER_AUTH_URL ||
-  "http://localhost:3002";
-const configuredCorsOrigin =
-  process.env.NEXT_APP_URL ||
-  process.env.APP_URL ||
-  process.env.BETTER_AUTH_BASE_URL ||
-  process.env.BETTER_AUTH_URL ||
-  "http://localhost:3002";
+  (isProduction ? undefined : "http://localhost:3002");
 const trustedOrigins = Array.from(
   new Set(
     [
-      configuredCorsOrigin,
+      configuredBaseUrl,
       process.env.APP_URL,
       process.env.WEB_ORIGIN,
       process.env.NEXT_PUBLIC_APP_URL,
@@ -29,10 +24,8 @@ const trustedOrigins = Array.from(
       .map((value) => value.replace(/\/+$/, "")),
   ),
 );
-const isProduction = process.env.NODE_ENV === "production";
-
 export const auth = betterAuth({
-  baseURL: configuredServerBaseUrl,
+  baseURL: configuredBaseUrl,
   database: drizzleAdapter(db, {
     provider: "pg",
 

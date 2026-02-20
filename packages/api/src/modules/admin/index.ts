@@ -29,6 +29,33 @@ function roleRank(role: string | null | undefined) {
   return ROLE_RANK[normalized] ?? 0;
 }
 
+function isEmailUniqueConstraintError(error: unknown) {
+  const candidate = error as
+    | {
+        code?: string;
+        detail?: string;
+        constraint?: string;
+        meta?: { target?: string | string[] };
+      }
+    | undefined;
+
+  if (candidate?.code === "P2002") {
+    const target = candidate.meta?.target;
+    if (Array.isArray(target)) {
+      return target.some((entry) => String(entry).toLowerCase().includes("email"));
+    }
+    return typeof target === "string" && target.toLowerCase().includes("email");
+  }
+
+  if (candidate?.code === "23505") {
+    const constraint = (candidate.constraint ?? "").toLowerCase();
+    const detail = (candidate.detail ?? "").toLowerCase();
+    return constraint.includes("email") || detail.includes("email");
+  }
+
+  return false;
+}
+
 async function getOrCreateWorkspaceSettings() {
   const existing = await db.query.workspaceSettings.findFirst({
     where: (table, { eq }) => eq(table.id, "default"),
@@ -99,7 +126,7 @@ export const adminRoutes = new Elysia()
     }
     const requesterRoleRank = roleRank(authedUser?.role);
     const targetRoleRank = roleRank(targetUser?.role);
-    if (targetRoleRank > requesterRoleRank) {
+    if (targetRoleRank >= requesterRoleRank) {
       return status(403, { error: "Forbidden" });
     }
 
@@ -121,9 +148,7 @@ export const adminRoutes = new Elysia()
         .where(eq(user.id, params.userId))
         .returning({ id: user.id });
     } catch (error) {
-      const message =
-        error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
-      if (message.includes("unique") && message.includes("email")) {
+      if (isEmailUniqueConstraintError(error)) {
         return status(409, { error: "Email already in use" });
       }
       throw error;
@@ -152,7 +177,7 @@ export const adminRoutes = new Elysia()
     }
     const requesterRoleRank = roleRank(authedUser?.role);
     const targetRoleRank = roleRank(targetUser?.role);
-    if (targetRoleRank > requesterRoleRank) {
+    if (targetRoleRank >= requesterRoleRank) {
       return status(403, { error: "Forbidden" });
     }
 

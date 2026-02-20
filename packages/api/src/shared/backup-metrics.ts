@@ -109,7 +109,7 @@ function parseBackupMetric(output: unknown): ParsedBackupMetric | null {
   ]);
 
   return {
-    bytesAdded: Math.trunc(bytesAdded ?? 0),
+    bytesAdded: Math.max(0, Math.trunc(bytesAdded ?? 0)),
     bytesProcessed: Math.max(0, Math.floor(bytesProcessed ?? Math.max(0, bytesAdded ?? 0))),
     filesNew: filesNew === null ? null : Math.max(0, Math.floor(filesNew)),
     filesChanged: filesChanged === null ? null : Math.max(0, Math.floor(filesChanged)),
@@ -266,7 +266,7 @@ export async function backfillBackupMetricsForUser(input: {
   }>) {
     if (!row.run_id) continue;
     const bytesAdded = Number(row.bytes_added);
-    if (!Number.isFinite(bytesAdded)) continue;
+    if (!Number.isFinite(bytesAdded) || bytesAdded <= 0) continue;
     const normalizedBytesAdded = Math.trunc(bytesAdded);
     const bytesProcessed = normalizedBytesAdded;
 
@@ -293,6 +293,7 @@ export async function backfillBackupMetricsForUser(input: {
     }
 
     inserted += 1;
+    remainingCapacity -= 1;
     await detectBackupSizeAnomaly({
       metricId,
       userId: row.user_id,
@@ -355,7 +356,9 @@ export async function detectBackupSizeAnomaly(input: {
       .where(
         and(
           eq(backupSizeAnomaly.userId, input.userId),
-          eq(backupSizeAnomaly.planId, input.planId ?? null),
+          input.planId != null
+            ? eq(backupSizeAnomaly.planId, input.planId)
+            : isNull(backupSizeAnomaly.planId),
           eq(backupSizeAnomaly.repositoryId, input.repositoryId),
           isNull(backupSizeAnomaly.resolvedAt),
         ),
