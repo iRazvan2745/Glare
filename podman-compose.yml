@@ -1,0 +1,45 @@
+name: glare
+
+services:
+  postgres:
+    image: docker.io/library/postgres:17-alpine
+    container_name: glare-postgres
+    environment:
+      POSTGRES_DB: glare
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    volumes:
+      - glare_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d glare"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  server:
+    image: ghcr.io/iRazvan2745/glare-server
+    container_name: glare-server
+    environment:
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/glare
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me}
+      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
+      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3002}
+      NODE_ENV: production
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  web:
+    image: ghcr.io/iRazvan2745/glare-web
+    container_name: glare-web
+    environment:
+      NEXT_PUBLIC_SERVER_URL: ${NEXT_PUBLIC_SERVER_URL:-http://localhost:3000}
+      NODE_ENV: production
+    depends_on:
+      - server
+    restart: unless-stopped
+
+volumes:
+  glare_postgres_data:

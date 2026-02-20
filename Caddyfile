@@ -1,0 +1,7 @@
+app.example.com {
+  reverse_proxy http://glare-web:3002
+}
+
+api.example.com {
+  reverse_proxy http://glare-server:3000
+}

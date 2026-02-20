@@ -1,107 +1,65 @@
 # Glare
 
-Glare is a distributed backup control plane for multi-server environments.  
+Glare is a distributed backup control plane for multi-server environments.
 It provides a web UI, an API server, and worker agents that execute backups locally with `rustic`.
 
-## Codebase Analysis
+Workers are independent and do not require the API server to be online. The workers are not the ones scheduling the snapshots, instead they fetch the backup plans periodically and reports batched statistics.
 
-This repository is a Bun + Turborepo monorepo.
+## Why Glare?
 
-### Apps
+- Distributed-first design
+- Workers operate independently of the control plane
+- Simple internal deployment
 
-- `apps/server`: Elysia API server (auth, worker sync, repositories, plans, runs/events, observability).
-- `apps/web`: Next.js control plane UI.
-- `apps/docs`: Next.js docs site (Fumadocs).
-- `apps/worker`: Rust worker service (Axum) that executes backup jobs and reports status.
+## Architecture
 
-### Shared Packages
+- `server`: API server (auth, worker sync, repositories, plans, runs/events, observability).
+- `web`: Control plane UI.
+- `worker`: Rust worker that executes backup jobs. (Requires a port)
 
-- `packages/db`: Drizzle ORM schema, SQL migrations, DB scripts.
-- `packages/auth`: Better Auth integration.
-- `packages/env`: typed environment access for server/web.
-- `packages/config`: shared TypeScript config.
+## Install guide
 
-### Runtime Topology
+### Server and Web app
 
-1. `apps/web` talks to `apps/server`.
-2. `apps/server` persists state to PostgreSQL.
-3. `apps/worker` syncs plans from `apps/server`, runs backups locally, and reports execution results.
+> Works with docker aswell, but podman is cooler
 
-## Prerequisites
+1. Copy the `podman-compose.yml` file.
+2. Update the required environment variables:
 
-- Bun `1.3.4+`
-- Docker or Podman (for local PostgreSQL via compose)
-- Rust toolchain (if building/running worker locally)
+* `BETTER_AUTH_SECRET`
+  Generate one using:
+  [https://www.better-auth.com/docs/installation#set-environment-variables](https://www.better-auth.com/docs/installation#set-environment-variables)
 
-## Environment
+* `CORS_ORIGIN`
+  Set this to the URL of the web app.
 
-Create `apps/server/.env`:
+* `BETTER_AUTH_URL`
+  Set this to the URL of the API server.
 
-```bash
-DATABASE_URL=postgresql://postgres:password@localhost:5434/glare
-BETTER_AUTH_SECRET=change-me
-CORS_ORIGIN=http://localhost:3002
-BETTER_AUTH_URL=http://localhost:3000
-# Optional overrides:
-# BETTER_AUTH_BASE_URL=http://localhost:3000
-# WEB_ORIGIN=http://localhost:3002
-# NEXT_PUBLIC_APP_URL=http://localhost:3002
-```
-
-Create `apps/web/.env.local`:
+3. Start the stack:
 
 ```bash
-NEXT_PUBLIC_SERVER_URL=http://localhost:3000
+podman-compose up -d
 ```
 
-## Quick Start
+To stop it:
 
 ```bash
-bun install
-bun run db:start
-bun run dev
+podman-compose down
 ```
 
-Default local ports:
+4. Reverse proxy:
+   Copy the contents of Caddyfile in /etc/caddy/Caddyfile
 
-- API server: `3000`
-- Web app: `3002`
-- Postgres (compose): `5434`
+### Worker
 
-## Database Migrations
+The installer command will show up when you create one.
 
-Server startup now applies pending Drizzle migrations automatically before serving traffic.
+## API Documentation
 
-- Local dev (`apps/server/src/index.ts`): migrations run on every process start.
-- Docker server image: migration SQL files are copied into the runtime image and applied on boot.
+You can access it at ```http(s)://<API URL>/openapi```
 
-Manual migration command is still available:
+## Advisory
 
-```bash
-bun run db:migrate
-```
-
-## Useful Commands
-
-```bash
-# all dev tasks through turbo
-bun run dev
-
-# server only
-bun run dev:server
-
-# web only
-bun run dev:web
-
-# db utilities
-bun run db:start
-bun run db:stop
-bun run db:down
-bun run db:studio
-```
-
-## Build
-
-```bash
-bun run build
-```
+- This app is 60% LLM written. Using opus and codex.
+- This is an internal app, run it on an internal network. E.g. [Tailscale](https://tailscale.com/)
