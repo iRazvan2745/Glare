@@ -37,13 +37,13 @@ Workers are independent and do not require the API server to be online. The work
 3. Start the stack:
 
 ```bash
-podman-compose up -d
+podman compose up -d
 ```
 
 To stop it:
 
 ```bash
-podman-compose down
+podman compose down
 ```
 
 4. Reverse proxy:
