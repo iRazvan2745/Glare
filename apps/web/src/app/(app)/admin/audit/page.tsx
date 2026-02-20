@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/table";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
-import { env } from "@glare/env/web";
 
 type AuditLogEntry = {
   id: string;
@@ -75,7 +74,7 @@ export default function AdminAuditPage() {
       if (resourceFilter !== "all") params.set("resourceType", resourceFilter);
 
       const data = await apiFetchJson<{ logs?: AuditLogEntry[] }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/audit/logs?${params.toString()}`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/audit/logs?${params.toString()}`,
         { method: "GET", retries: 1 },
       );
       const entries = data.logs ?? [];

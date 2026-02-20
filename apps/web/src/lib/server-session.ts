@@ -1,4 +1,3 @@
-import { env } from "@glare/env/web";
 import { headers } from "next/headers";
 
 type ServerAuthSession = {
@@ -16,7 +15,7 @@ export async function getServerSession(): Promise<ServerAuthSession | null> {
   const requestHeaders = await headers();
   const cookie = requestHeaders.get("cookie");
 
-  const response = await fetch(`${env.NEXT_PUBLIC_SERVER_URL}/api/auth/get-session`, {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/auth/get-session`, {
     method: "GET",
     headers: cookie ? { cookie } : undefined,
     cache: "no-store",

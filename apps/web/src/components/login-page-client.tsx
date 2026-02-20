@@ -4,14 +4,13 @@ import { useEffect, useState } from "react";
 
 import SignInForm from "@/components/sign-in-form";
 import SignUpForm from "@/components/sign-up-form";
-import { env } from "@glare/env/web";
 
 export default function LoginPageClient() {
   const [showSignIn, setShowSignIn] = useState(true);
   const [signupsEnabled, setSignupsEnabled] = useState(true);
 
   useEffect(() => {
-    const base = env.NEXT_PUBLIC_SERVER_URL.replace(/\/+$/, "");
+    const base = (process.env.NEXT_PUBLIC_SERVER_URL ?? "").replace(/\/+$/, "");
     fetch(`${base}/api/public/signup-status`, { credentials: "include" })
       .then((res) => res.json())
       .then((data: unknown) => {

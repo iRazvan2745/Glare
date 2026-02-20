@@ -9,7 +9,6 @@ import {
   RiServerLine,
 } from "@remixicon/react";
 import { useQuery } from "@tanstack/react-query";
-import { env } from "@glare/env/web";
 import {
   Area,
   AreaChart,
@@ -126,7 +125,7 @@ export default function ObservabilityPage() {
     enabled: Boolean(session?.user),
     queryFn: () =>
       apiFetchJson<OverviewResponse>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/observability/overview?range=${range}`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/observability/overview?range=${range}`,
         {
           method: "GET",
         },
@@ -138,7 +137,7 @@ export default function ObservabilityPage() {
     enabled: Boolean(session?.user),
     queryFn: () =>
       apiFetchJson<EventsResponse>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/observability/events?severity=${severity}&status=${status}&limit=${pageSize}&offset=${offset}`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/observability/events?severity=${severity}&status=${status}&limit=${pageSize}&offset=${offset}`,
         { method: "GET" },
       ),
   });
@@ -148,7 +147,7 @@ export default function ObservabilityPage() {
     enabled: Boolean(session?.user),
     queryFn: () =>
       apiFetchJson<{ logs: AuditLogRecord[] }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/audit/logs?limit=20`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/audit/logs?limit=20`,
         {
           method: "GET",
         },
@@ -249,7 +248,7 @@ export default function ObservabilityPage() {
               variant="outline"
               onClick={() =>
                 window.open(
-                  `${env.NEXT_PUBLIC_SERVER_URL}/api/compliance/report.csv?hours=${RANGE_TO_HOURS[range] ?? 24}`,
+                  `${process.env.NEXT_PUBLIC_SERVER_URL}/api/compliance/report.csv?hours=${RANGE_TO_HOURS[range] ?? 24}`,
                   "_blank",
                 )
               }

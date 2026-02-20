@@ -36,7 +36,6 @@ import {
 } from "@/components/ui/table";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
-import { env } from "@glare/env/web";
 
 type WorkerRecord = {
   id: string;
@@ -91,7 +90,7 @@ export default function AdminWorkersPage() {
     setIsLoading(true);
     try {
       const data = await apiFetchJson<{ workers?: WorkerRecord[] }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
         { method: "GET", retries: 1 },
       );
       setWorkers(data.workers ?? []);
@@ -111,7 +110,7 @@ export default function AdminWorkersPage() {
     setIsSaving(true);
     try {
       const data = await apiFetchJson<{ worker?: WorkerRecord; syncToken?: string }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -145,7 +144,7 @@ export default function AdminWorkersPage() {
     setIsSaving(true);
     try {
       const data = await apiFetchJson<{ worker?: WorkerRecord }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${editingId}`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${editingId}`,
         {
           method: "PATCH",
           body: JSON.stringify({ name: editName.trim(), region: editRegion.trim() || null }),
@@ -166,7 +165,7 @@ export default function AdminWorkersPage() {
   async function deleteWorker(workerId: string) {
     setIsSaving(true);
     try {
-      await apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}`, {
+      await apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}`, {
         method: "DELETE",
         retries: 1,
       });
@@ -183,7 +182,7 @@ export default function AdminWorkersPage() {
     setIsSaving(true);
     try {
       const data = await apiFetchJson<{ syncToken?: string }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}/rotate-sync-token`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}/rotate-sync-token`,
         { method: "POST", retries: 1 },
       );
       if (data.syncToken) setNewToken(data.syncToken);

@@ -31,7 +31,6 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
-import { env } from "@glare/env/web";
 import { parseAsBoolean, parseAsString, useQueryState } from "nuqs";
 import { Spinner } from "@/components/ui/spinner";
 
@@ -393,7 +392,7 @@ function SnapshotsPageContent() {
 
       const wsUrl = buildSnapshotStreamWebSocketUrl(
         selectedRepositoryId,
-        env.NEXT_PUBLIC_SERVER_URL,
+        process.env.NEXT_PUBLIC_SERVER_URL,
       );
       if (!wsUrl) {
         ensureFallbackPolling();

@@ -41,7 +41,6 @@ import { Separator } from "@/components/ui/separator";
 import { deriveHealthStatus } from "@/lib/control-plane/health";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
-import { env } from "@glare/env/web";
 import {
   Select,
   SelectTrigger,
@@ -514,7 +513,7 @@ function WorkersPageContent() {
 
     try {
       const data = await apiFetchJson<{ worker?: WorkerRecord; syncToken?: string }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
         {
           method: "POST",
           body: JSON.stringify({ name: normalizedName }),
@@ -552,7 +551,7 @@ function WorkersPageContent() {
     setIsUpdatingWorker(true);
     try {
       const data = await apiFetchJson<{ worker?: WorkerRecord }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${editingWorkerId}`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${editingWorkerId}`,
         {
           method: "PATCH",
           body: JSON.stringify({ name: normalizedName }),
@@ -582,7 +581,7 @@ function WorkersPageContent() {
 
     setIsDeletingWorker(true);
     try {
-      await apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${deletingWorkerId}`, {
+      await apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${deletingWorkerId}`, {
         method: "DELETE",
         retries: 1,
       });
@@ -614,7 +613,7 @@ function WorkersPageContent() {
     setIsSavingRepoSetup(true);
     try {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${selectedRepositoryIdToAttach}`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${selectedRepositoryIdToAttach}`,
         {
           method: "PATCH",
           body: JSON.stringify({ workerId: activeWorker.id }),
@@ -641,7 +640,7 @@ function WorkersPageContent() {
     setIsSavingRepoSetup(true);
     try {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repositoryId}`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repositoryId}`,
         {
           method: "PATCH",
           body: JSON.stringify({ workerId: null }),
@@ -690,7 +689,7 @@ function WorkersPageContent() {
     setIsSavingRepoSetup(true);
     try {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
         {
           method: "POST",
           body: JSON.stringify({

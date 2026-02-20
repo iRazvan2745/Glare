@@ -17,7 +17,6 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { ApiError, apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
-import { env } from "@glare/env/web";
 
 function getCookie(name: string) {
   if (typeof document === "undefined") return null;
@@ -52,7 +51,7 @@ export default function SettingsSecurityPage() {
     queryKey: ["settings", session?.user?.id ?? "anonymous"],
     enabled: Boolean(session?.user),
     queryFn: () =>
-      apiFetchJson<{ settings?: SettingsPayload }>(`${env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
+      apiFetchJson<{ settings?: SettingsPayload }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
         method: "GET",
         retries: 1,
       }),
@@ -60,7 +59,7 @@ export default function SettingsSecurityPage() {
 
   const saveSettingsMutation = useMutation({
     mutationFn: (payload: Partial<SettingsPayload>) =>
-      apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
+      apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
         method: "POST",
         body: JSON.stringify(payload),
         retries: 1,

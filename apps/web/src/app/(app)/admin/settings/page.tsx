@@ -5,7 +5,6 @@ import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { env } from "@glare/env/web";
 import { toast } from "@/lib/toast";
 
 function getErrorMessage(error: unknown) {
@@ -16,7 +15,7 @@ function getErrorMessage(error: unknown) {
 }
 
 async function apiFetch(path: string, options?: RequestInit) {
-  const base = env.NEXT_PUBLIC_SERVER_URL.replace(/\/+$/, "");
+  const base = (process.env.NEXT_PUBLIC_SERVER_URL ?? "").replace(/\/+$/, "");
   const res = await fetch(`${base}${path}`, {
     credentials: "include",
     headers: { "content-type": "application/json" },

@@ -22,7 +22,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { apiFetchJson } from "@/lib/api-fetch";
 import { deriveHealthStatus } from "@/lib/control-plane/health";
 import { authClient } from "@/lib/auth-client";
-import { env } from "@glare/env/web";
 
 type WorkerRecord = {
   id: string;
@@ -89,7 +88,7 @@ export default function RepositoryInfoPage() {
 
     try {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repositoryId}`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repositoryId}`,
         {
           method: "GET",
           retries: 1,
@@ -162,7 +161,7 @@ export default function RepositoryInfoPage() {
     setIsInitLoading(true);
     try {
       await apiFetchJson(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repository.id}/init`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repository.id}/init`,
         {
           method: "POST",
           retries: 1,

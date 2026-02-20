@@ -48,7 +48,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
 import { deriveHealthStatus } from "@/lib/control-plane/health";
-import { env } from "@glare/env/web";
 
 type WorkerRecord = {
   id: string;
@@ -351,13 +350,13 @@ export default function BackupPlansPage() {
     try {
       const [repoData, planData] = await Promise.all([
         apiFetchJson<{ repositories?: RepositoryRecord[] }>(
-          `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+          `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
           {
             method: "GET",
             retries: 1,
           },
         ),
-        apiFetchJson<{ plans?: BackupPlan[] }>(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans`, {
+        apiFetchJson<{ plans?: BackupPlan[] }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans`, {
           method: "GET",
           retries: 1,
         }),
@@ -407,7 +406,7 @@ export default function BackupPlansPage() {
     setIsSaving(true);
     try {
       const data = await apiFetchJson<{ plan?: BackupPlan }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -460,7 +459,7 @@ export default function BackupPlansPage() {
     setIsSaving(true);
     try {
       const data = await apiFetchJson<{ plan?: BackupPlan }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${editingId}`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${editingId}`,
         {
           method: "PATCH",
           body: JSON.stringify({
@@ -495,7 +494,7 @@ export default function BackupPlansPage() {
   async function removePlan(planId: string) {
     setIsSaving(true);
     try {
-      await apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${planId}`, {
+      await apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${planId}`, {
         method: "DELETE",
         retries: 1,
       });
@@ -511,7 +510,7 @@ export default function BackupPlansPage() {
   async function togglePlan(plan: BackupPlan) {
     try {
       const data = await apiFetchJson<{ plan?: BackupPlan }>(
-        `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${plan.id}`,
+        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${plan.id}`,
         {
           method: "PATCH",
           body: JSON.stringify({ enabled: !plan.enabled }),
@@ -531,7 +530,7 @@ export default function BackupPlansPage() {
   async function runPlanNow(plan: BackupPlan) {
     setRunningPlanId(plan.id);
     try {
-      await apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${plan.id}/run`, {
+      await apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/${plan.id}/run`, {
         method: "POST",
         retries: 1,
       });
@@ -556,7 +555,7 @@ export default function BackupPlansPage() {
         ok: number;
         failed: number;
         results: Array<{ planId: string; ok: boolean; message: string }>;
-      }>(`${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/bulk`, {
+      }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/plans/bulk`, {
         method: "POST",
         body: JSON.stringify({ action, planIds: selectedPlanIds }),
         retries: 1,

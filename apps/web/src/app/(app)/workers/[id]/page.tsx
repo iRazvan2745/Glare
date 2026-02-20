@@ -24,7 +24,6 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { deriveHealthStatus } from "@/lib/control-plane/health";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
-import { env } from "@glare/env/web";
 
 import { UptimeHeatmap } from "./_components/uptime-heatmap";
 import { SyncEventsTable } from "./_components/sync-events-table";
@@ -151,16 +150,16 @@ export default function WorkerDetailPage() {
     enabled: Boolean(session?.user && workerId),
     queryFn: async () => {
       const [workersData, chartEventsData, tableEventsData] = await Promise.all([
-        apiFetchJson<{ workers?: WorkerRecord[] }>(`${env.NEXT_PUBLIC_SERVER_URL}/api/workers`, {
+        apiFetchJson<{ workers?: WorkerRecord[] }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`, {
           method: "GET",
           retries: 1,
         }),
         apiFetchJson<SyncEventsResponse>(
-          `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}/sync-events?hours=${RANGE_TO_HOURS[timeRange]}&limit=${RANGE_TO_EVENT_LIMIT[timeRange]}`,
+          `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}/sync-events?hours=${RANGE_TO_HOURS[timeRange]}&limit=${RANGE_TO_EVENT_LIMIT[timeRange]}`,
           { method: "GET", retries: 1 },
         ),
         apiFetchJson<SyncEventsResponse>(
-          `${env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}/sync-events?hours=${RANGE_TO_HOURS[timeRange]}&status=${statusFilter}&limit=${EVENTS_PAGE_SIZE}&offset=${tableOffset}`,
+          `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${workerId}/sync-events?hours=${RANGE_TO_HOURS[timeRange]}&status=${statusFilter}&limit=${EVENTS_PAGE_SIZE}&offset=${tableOffset}`,
           { method: "GET", retries: 1 },
         ),
       ]);

@@ -1,4 +1,3 @@
-import "@glare/env/web";
 import type { NextConfig } from "next";
 
 const serverUrl = process.env.NEXT_PUBLIC_SERVER_URL?.replace(/\/+$/, "") ?? "";

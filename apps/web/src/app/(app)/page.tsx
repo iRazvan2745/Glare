@@ -21,7 +21,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
 import { deriveHealthStatus } from "@/lib/control-plane/health";
-import { env } from "@glare/env/web";
 import { parseAsStringEnum, useQueryState } from "nuqs";
 
 import {
@@ -173,28 +172,28 @@ export default function DashboardPage() {
 
       const [workersData, reposData, trafficData, storageData, dedupData, anomalyData] =
         await Promise.all([
-          apiFetchJson<{ workers?: WorkerRecord[] }>(`${env.NEXT_PUBLIC_SERVER_URL}/api/workers`, {
+          apiFetchJson<{ workers?: WorkerRecord[] }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`, {
             method: "GET",
             retries: 1,
           }),
           apiFetchJson<{ repositories?: RepositoryRecord[] }>(
-            `${env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+            `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
             { method: "GET", retries: 1 },
           ),
           apiFetchJson<{ buckets?: SnapshotActivityBucket[]; runs?: SnapshotRun[] }>(
-            `${env.NEXT_PUBLIC_SERVER_URL}/api/stats/snapshot-activity?hours=${hours}&buckets=${buckets}`,
+            `${process.env.NEXT_PUBLIC_SERVER_URL}/api/stats/snapshot-activity?hours=${hours}&buckets=${buckets}`,
             { method: "GET", retries: 1 },
           ),
           apiFetchJson<{ buckets?: StorageUsageBucket[] }>(
-            `${env.NEXT_PUBLIC_SERVER_URL}/api/stats/storage-usage?hours=${hours}&intervalMinutes=5`,
+            `${process.env.NEXT_PUBLIC_SERVER_URL}/api/stats/storage-usage?hours=${hours}&intervalMinutes=5`,
             { method: "GET", retries: 1 },
           ),
           apiFetchJson<{ rows?: DedupRow[] }>(
-            `${env.NEXT_PUBLIC_SERVER_URL}/api/stats/dedup?hours=${hours}&groupBy=repository`,
+            `${process.env.NEXT_PUBLIC_SERVER_URL}/api/stats/dedup?hours=${hours}&groupBy=repository`,
             { method: "GET", retries: 1 },
           ),
           apiFetchJson<{ rows?: AnomalyRow[] }>(
-            `${env.NEXT_PUBLIC_SERVER_URL}/api/stats/anomalies?hours=${hours}&status=open`,
+            `${process.env.NEXT_PUBLIC_SERVER_URL}/api/stats/anomalies?hours=${hours}&status=open`,
             { method: "GET", retries: 1 },
           ),
         ]);

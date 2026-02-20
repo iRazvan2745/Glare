@@ -49,7 +49,6 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { authClient } from "@/lib/auth-client";
-import { env } from "@glare/env/web";
 import { toast } from "@/lib/toast";
 import {
   RiAddLine,
@@ -106,7 +105,7 @@ function getErrorMessage(error: unknown) {
 }
 
 async function apiFetch(path: string, options?: RequestInit) {
-  const base = env.NEXT_PUBLIC_SERVER_URL.replace(/\/+$/, "");
+  const base = (process.env.NEXT_PUBLIC_SERVER_URL ?? "").replace(/\/+$/, "");
   const res = await fetch(`${base}${path}`, {
     credentials: "include",
     headers: { "content-type": "application/json" },

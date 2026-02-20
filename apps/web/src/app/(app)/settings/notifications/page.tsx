@@ -17,7 +17,6 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { ApiError, apiFetchJson } from "@/lib/api-fetch";
 import { authClient } from "@/lib/auth-client";
-import { env } from "@glare/env/web";
 
 type SettingsPayload = {
   productUpdates: boolean;
@@ -51,7 +50,7 @@ export default function SettingsNotificationsPage() {
     queryKey: ["settings", session?.user?.id ?? "anonymous"],
     enabled: Boolean(session?.user),
     queryFn: () =>
-      apiFetchJson<{ settings?: SettingsPayload }>(`${env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
+      apiFetchJson<{ settings?: SettingsPayload }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
         method: "GET",
         retries: 1,
       }),
@@ -59,7 +58,7 @@ export default function SettingsNotificationsPage() {
 
   const saveSettingsMutation = useMutation({
     mutationFn: (payload: SettingsPayload) =>
-      apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
+      apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
         method: "POST",
         body: JSON.stringify(payload),
         retries: 1,
@@ -77,7 +76,7 @@ export default function SettingsNotificationsPage() {
 
   const testDiscordMutation = useMutation({
     mutationFn: () =>
-      apiFetchJson(`${env.NEXT_PUBLIC_SERVER_URL}/api/settings/discord/test`, {
+      apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/settings/discord/test`, {
         method: "POST",
         retries: 0,
       }),
