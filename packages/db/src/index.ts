@@ -1,4 +1,3 @@
-import { env } from "@glare/env/server";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { migrate } from "drizzle-orm/node-postgres/migrator";
 import { existsSync } from "node:fs";
@@ -6,7 +5,12 @@ import { resolve } from "node:path";
 
 import * as schema from "./schema";
 
-export const db = drizzle(env.DATABASE_URL, { schema });
+const databaseUrl = process.env.DATABASE_URL;
+if (!databaseUrl || databaseUrl.trim().length === 0) {
+  throw new Error("Missing required environment variable: DATABASE_URL");
+}
+
+export const db = drizzle(databaseUrl, { schema });
 
 function resolveMigrationsFolder() {
   const explicitDir = process.env.GLARE_MIGRATIONS_DIR;

@@ -1,6 +1,5 @@
 import { cors } from "@elysiajs/cors";
 import { runMigrations } from "@glare/db";
-import { env } from "@glare/env/server";
 import { Elysia } from "elysia";
 import { adminRoutes } from "./modules/admin/index";
 import { authRoutes } from "./modules/auth/index";
@@ -23,6 +22,8 @@ import {
 import { startSnapshotSyncInterval } from "./shared/snapshot-sync";
 import { healthSnapshot, verifyStartupHealth } from "./shared/startup-health";
 import openapi from "@elysiajs/openapi";
+
+const corsOrigin = process.env.CORS_ORIGIN || "http://localhost:3002";
 
 function getPostgresErrorCode(error: unknown): string | undefined {
   if (typeof error !== "object" || error === null) {
@@ -68,7 +69,7 @@ const app = new Elysia()
   })
   .use(
     cors({
-      origin: env.CORS_ORIGIN,
+      origin: corsOrigin,
       methods: ["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
       allowedHeaders: ["Content-Type", "Authorization"],
       credentials: true,
@@ -103,5 +104,5 @@ await verifyStartupHealth();
 startSnapshotSyncInterval();
 
 app.listen(3000, () => {
-  logInfo("server is running", { url: app.route, corsOrigin: env.CORS_ORIGIN });
+  logInfo("server is running", { url: app.route, corsOrigin });
 });

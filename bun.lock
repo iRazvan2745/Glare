@@ -5,7 +5,6 @@
     "": {
       "name": "glare",
       "dependencies": {
-        "@glare/env": "workspace:*",
         "dotenv": "catalog:",
       },
       "devDependencies": {
@@ -48,7 +47,6 @@
         "@elysiajs/openapi": "^1.4.14",
         "@glare/auth": "workspace:*",
         "@glare/db": "workspace:*",
-        "@glare/env": "workspace:*",
         "arktype": "catalog:",
         "better-auth": "catalog:",
         "dotenv": "catalog:",
@@ -71,7 +69,6 @@
       "dependencies": {
         "@base-ui/react": "^1.2.0",
         "@glare/auth": "workspace:*",
-        "@glare/env": "workspace:*",
         "@remixicon/react": "^4.6.0",
         "@tanstack/react-form": "^1.28.0",
         "@tanstack/react-query": "^5.90.21",
@@ -112,7 +109,6 @@
       "name": "@glare/auth",
       "dependencies": {
         "@glare/db": "workspace:*",
-        "@glare/env": "workspace:*",
         "better-auth": "catalog:",
         "dotenv": "catalog:",
       },
@@ -128,7 +124,6 @@
     "packages/db": {
       "name": "@glare/db",
       "dependencies": {
-        "@glare/env": "workspace:*",
         "dotenv": "catalog:",
         "drizzle-orm": "^0.45.1",
         "pg": "^8.17.1",
@@ -137,18 +132,6 @@
         "@glare/config": "workspace:*",
         "@types/pg": "^8.16.0",
         "drizzle-kit": "^0.31.8",
-        "typescript": "catalog:",
-      },
-    },
-    "packages/env": {
-      "name": "@glare/env",
-      "version": "0.0.0",
-      "dependencies": {
-        "dotenv": "catalog:",
-      },
-      "devDependencies": {
-        "@glare/config": "workspace:*",
-        "@types/bun": "catalog:",
         "typescript": "catalog:",
       },
     },
@@ -334,8 +317,6 @@
     "@glare/config": ["@glare/config@workspace:packages/config"],
 
     "@glare/db": ["@glare/db@workspace:packages/db"],
-
-    "@glare/env": ["@glare/env@workspace:packages/env"],
 
     "@hono/node-server": ["@hono/node-server@1.19.9", "", { "peerDependencies": { "hono": "^4" } }, "sha512-vHL6w3ecZsky+8P5MD+eFfaGTyCeOHUIFYMGpQGbrBTSmNNoxv0if69rEZ5giu36weC5saFuznL411gRX7bJDw=="],
 

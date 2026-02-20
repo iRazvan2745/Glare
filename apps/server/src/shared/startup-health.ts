@@ -1,5 +1,4 @@
 import { db } from "@glare/db";
-import { env } from "@glare/env/server";
 import { sql } from "drizzle-orm";
 import { logError, logInfo } from "./logger";
 
@@ -7,7 +6,7 @@ const REQUIRED_ENV_KEYS = ["DATABASE_URL", "BETTER_AUTH_SECRET", "CORS_ORIGIN"] 
 
 function checkRequiredEnv() {
   const missing = REQUIRED_ENV_KEYS.filter((key) => {
-    const value = env[key];
+    const value = process.env[key];
     return typeof value !== "string" || value.trim().length === 0;
   });
 

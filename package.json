@@ -36,7 +36,6 @@
     "check": "oxlint && oxfmt --write"
   },
   "dependencies": {
-    "@glare/env": "workspace:*",
     "dotenv": "catalog:"
   },
   "devDependencies": {

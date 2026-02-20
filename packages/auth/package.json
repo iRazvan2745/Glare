@@ -12,7 +12,6 @@
   "scripts": {},
   "dependencies": {
     "@glare/db": "workspace:*",
-    "@glare/env": "workspace:*",
     "better-auth": "catalog:",
     "dotenv": "catalog:"
   },

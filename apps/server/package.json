@@ -14,7 +14,6 @@
     "@elysiajs/openapi": "^1.4.14",
     "@glare/auth": "workspace:*",
     "@glare/db": "workspace:*",
-    "@glare/env": "workspace:*",
     "arktype": "catalog:",
     "better-auth": "catalog:",
     "dotenv": "catalog:",
