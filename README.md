@@ -49,7 +49,7 @@ podman compose down
 4. Reverse proxy:
    Copy the contents of [Caddyfile](https://github.com/iRazvan2745/Glare/blob/main/Caddyfile) in ```/etc/caddy/Caddyfile``` then run ```systemctl restart caddy```
 
-> Pdoman and caddy are not a dependecy but they are really cool
+> Podman and caddy are not a required but they are really cool
 
 ### Worker
 
