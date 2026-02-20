@@ -105,5 +105,3 @@ startSnapshotSyncInterval();
 app.listen(3000, () => {
   logInfo("server is running", { url: app.route, corsOrigin: env.CORS_ORIGIN });
 });
-
-export default app;
