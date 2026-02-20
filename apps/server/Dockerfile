@@ -21,4 +21,4 @@ COPY --from=builder /app/packages/db/src/migrations ./packages/db/src/migrations
 
 EXPOSE 3000
 
-CMD ["bun", "run", "db:generate", "bun", "run", "apps/server/dist/index.mjs"]
+CMD ["sh", "-lc", "bun run db:init && bun run apps/server/dist/index.mjs"]

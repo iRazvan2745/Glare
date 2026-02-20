@@ -1,5 +1,7 @@
 # Glare
 
+![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/iRazvan2745/Glare?utm_source=oss&utm_medium=github&utm_campaign=iRazvan2745%2FGlare&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+
 Glare is a distributed backup control plane for multi-server environments.
 It provides a web UI, an API server, and worker agents that execute backups locally with `rustic`.
 
