@@ -42,6 +42,22 @@ function severityColor(severity: NotificationSeverity) {
   return 0x57f287;
 }
 
+function isValidDiscordWebhookUrl(webhookUrl: string): boolean {
+  if (!webhookUrl) return false;
+  try {
+    const url = new URL(webhookUrl);
+    if (url.protocol !== "https:") return false;
+    const hostname = url.hostname.toLowerCase();
+    const isDiscordDomain = hostname === "discord.com" || hostname === "discordapp.com" ||
+                           hostname.endsWith(".discord.com") || hostname.endsWith(".discordapp.com");
+    if (!isDiscordDomain) return false;
+    if (!url.pathname.startsWith("/api/webhooks/")) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function sendDiscordNotification(input: DiscordNotificationInput): Promise<boolean> {
   const settings = await db.query.userSettings.findFirst({
     where: eq(userSettings.userId, input.userId),
@@ -60,6 +76,13 @@ export async function sendDiscordNotification(input: DiscordNotificationInput): 
 
   const webhookUrl = settings.discordWebhookUrl?.trim();
   if (!webhookUrl) {
+    return false;
+  }
+
+  if (!isValidDiscordWebhookUrl(webhookUrl)) {
+    logWarn("discord webhook URL failed validation", {
+      userId: input.userId,
+    });
     return false;
   }
 

@@ -12,7 +12,7 @@ import {
 } from "@remixicon/react";
 import { useCallback, useEffect, useState, type Dispatch, type SetStateAction } from "react";
 import { toast } from "@/lib/toast";
-
+import { formatDistanceToNow } from 'date-fns';
 import {
   ActionMenu,
   ControlPlaneEmptyState,
@@ -630,7 +630,7 @@ export default function BackupPlansPage() {
         />
         <KpiStat
           label="Next run (soonest)"
-          value={nextRunSoonest ? formatDate(new Date(nextRunSoonest).toISOString()) : "—"}
+          value={nextRunSoonest ? formatDistanceToNow(new Date(nextRunSoonest).toISOString()) : "—"}
           icon={RiCalendarScheduleLine}
           color="violet"
         />

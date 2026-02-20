@@ -11,7 +11,12 @@ const configuredServerBaseUrl =
   process.env.BETTER_AUTH_BASE_URL ||
   process.env.BETTER_AUTH_URL ||
   "http://localhost:3002";
-const configuredCorsOrigin = process.env.NEXT_APP_URL || process.env.APP_URL || "http://localhost:3002";
+const configuredCorsOrigin =
+  process.env.NEXT_APP_URL ||
+  process.env.APP_URL ||
+  process.env.BETTER_AUTH_BASE_URL ||
+  process.env.BETTER_AUTH_URL ||
+  "http://localhost:3002";
 const trustedOrigins = Array.from(
   new Set(
     [configuredCorsOrigin, process.env.APP_URL, process.env.WEB_ORIGIN, process.env.NEXT_PUBLIC_APP_URL]

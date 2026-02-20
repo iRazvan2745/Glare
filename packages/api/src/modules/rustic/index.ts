@@ -1548,31 +1548,35 @@ async function resolveOwnedWorkerIds(userId: string, workerIds: string[]) {
 }
 
 async function replaceBackupWorkers(repositoryId: string, workerIds: string[]) {
-  await db
-    .delete(rusticRepositoryBackupWorker)
-    .where(eq(rusticRepositoryBackupWorker.repositoryId, repositoryId));
-  if (workerIds.length === 0) {
-    return;
-  }
-  await db.insert(rusticRepositoryBackupWorker).values(
-    workerIds.map((workerId) => ({
-      repositoryId,
-      workerId,
-    })),
-  );
+  await db.transaction(async (tx) => {
+    await tx
+      .delete(rusticRepositoryBackupWorker)
+      .where(eq(rusticRepositoryBackupWorker.repositoryId, repositoryId));
+    if (workerIds.length === 0) {
+      return;
+    }
+    await tx.insert(rusticRepositoryBackupWorker).values(
+      workerIds.map((workerId) => ({
+        repositoryId,
+        workerId,
+      })),
+    );
+  });
 }
 
 async function replacePlanWorkers(planId: string, workerIds: string[]) {
-  await db.delete(backupPlanWorker).where(eq(backupPlanWorker.planId, planId));
-  if (workerIds.length === 0) {
-    return;
-  }
-  await db.insert(backupPlanWorker).values(
-    workerIds.map((workerId) => ({
-      planId,
-      workerId,
-    })),
-  );
+  await db.transaction(async (tx) => {
+    await tx.delete(backupPlanWorker).where(eq(backupPlanWorker.planId, planId));
+    if (workerIds.length === 0) {
+      return;
+    }
+    await tx.insert(backupPlanWorker).values(
+      workerIds.map((workerId) => ({
+        planId,
+        workerId,
+      })),
+    );
+  });
 }
 
 async function getBackupPlansForUser(userId: string) {
@@ -6189,11 +6193,6 @@ export const rusticRoutes = new Elysia({ prefix: "/api" })
           snapshotId: body.snapshotId,
           snapshotIds: [body.snapshotId],
           prune: true,
-          keepLast: 0,
-          keepDaily: 0,
-          keepWeekly: 0,
-          keepMonthly: 0,
-          keepYearly: 0,
         };
 
         const proxy = await proxyToWorker(

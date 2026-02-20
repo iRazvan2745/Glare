@@ -54,8 +54,8 @@ function enrichRcloneOptionsFromS3(options: Record<string, string>): Record<stri
   }
   if (next["s3.path-style"] === "true" && !next["rclone.config.force_path_style"])
     next["rclone.config.force_path_style"] = "true";
-  if (next["s3.disable-tls"] === "true" && !next["rclone.config.disable_http2"])
-    next["rclone.config.disable_http2"] = "true";
+  if (next["s3.disable-tls"] === "true" && !next["rclone.config.no_ssl"])
+    next["rclone.config.no_ssl"] = "true";
   if (next["s3.no-verify-ssl"] === "true" && !next["rclone.config.no_check_certificate"])
     next["rclone.config.no_check_certificate"] = "true";
   if (!next["rclone.config.provider"]) {

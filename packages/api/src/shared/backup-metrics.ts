@@ -159,6 +159,8 @@ export async function backfillBackupMetricsForUser(input: {
 }) {
   const hours = Math.max(1, Math.min(24 * 180, Math.floor(input.hours)));
   const limit = Math.max(1, Math.min(1000, input.limit ?? 300));
+  let remainingCapacity = limit;
+
   const missingRuns = await db.$client.query(
     `
     SELECT
@@ -180,7 +182,7 @@ export async function backfillBackupMetricsForUser(input: {
     ORDER BY r."finished_at" ASC
     LIMIT $3
     `,
-    [input.userId, hours, limit],
+    [input.userId, hours, Math.max(0, remainingCapacity)],
   );
 
   let inserted = 0;
@@ -216,6 +218,7 @@ export async function backfillBackupMetricsForUser(input: {
     if (!metric) continue;
 
     inserted += 1;
+    remainingCapacity -= 1;
     await detectBackupSizeAnomaly({
       metricId: metric.id,
       userId: run.user_id,
@@ -247,7 +250,7 @@ export async function backfillBackupMetricsForUser(input: {
     ORDER BY s."created_at" ASC
     LIMIT $3
     `,
-    [input.userId, hours, limit],
+    [input.userId, hours, Math.max(0, remainingCapacity)],
   );
 
   for (const row of missingFromStorageEvents.rows as Array<{
@@ -263,9 +266,9 @@ export async function backfillBackupMetricsForUser(input: {
   }>) {
     if (!row.run_id) continue;
     const bytesAdded = Number(row.bytes_added);
-    if (!Number.isFinite(bytesAdded) || bytesAdded === 0) continue;
+    if (!Number.isFinite(bytesAdded)) continue;
     const normalizedBytesAdded = Math.trunc(bytesAdded);
-    const bytesProcessed = Math.max(0, Math.abs(normalizedBytesAdded));
+    const bytesProcessed = normalizedBytesAdded;
 
     const metricId = crypto.randomUUID();
     try {
@@ -352,11 +355,19 @@ export async function detectBackupSizeAnomaly(input: {
       .where(
         and(
           eq(backupSizeAnomaly.userId, input.userId),
+          eq(backupSizeAnomaly.planId, input.planId ?? null),
           eq(backupSizeAnomaly.repositoryId, input.repositoryId),
           isNull(backupSizeAnomaly.resolvedAt),
         ),
       )
-      .catch(() => undefined);
+      .catch((error) => {
+        logWarn("failed to resolve backup size anomaly", {
+          userId: input.userId,
+          planId: input.planId,
+          repositoryId: input.repositoryId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     return null;
   }
 

@@ -98,8 +98,16 @@ export const labelRoutes = new Elysia({ prefix: "/api" })
           key: item.key.trim().toLowerCase(),
           value: item.value.trim(),
         }))
-        .filter((item) => item.key.length > 0 && item.value.length > 0)
-        .slice(0, 32);
+        .filter((item) => item.key.length > 0 && item.value.length > 0);
+      
+      // Deduplicate by key+value combination while preserving order
+      const seen = new Set<string>();
+      const deduplicated = cleaned.filter((item) => {
+        const combined = `${item.key}\0${item.value}`;
+        if (seen.has(combined)) return false;
+        seen.add(combined);
+        return true;
+      }).slice(0, 32);
 
       await db.transaction(async (tx) => {
         await tx
@@ -112,9 +120,9 @@ export const labelRoutes = new Elysia({ prefix: "/api" })
             ),
           );
 
-        if (cleaned.length > 0) {
+        if (deduplicated.length > 0) {
           await tx.insert(entityLabel).values(
-            cleaned.map((item) => ({
+            deduplicated.map((item) => ({
               id: crypto.randomUUID(),
               userId: user.id,
               entityType: params.entityType,
@@ -128,7 +136,7 @@ export const labelRoutes = new Elysia({ prefix: "/api" })
         }
       });
 
-      return { labels: cleaned };
+      return { labels: deduplicated };
     },
     {
       params: labelEntityParamsSchema,

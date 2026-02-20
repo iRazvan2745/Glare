@@ -31,10 +31,13 @@ Workers are independent and do not require the control plane to be online. The w
   [https://www.better-auth.com/docs/installation#set-environment-variables](https://www.better-auth.com/docs/installation#set-environment-variables)
 
 * `NEXT_APP_URL`
-  Set this to the URL of the web app/API origin.
+  Set this to the URL of the web app/API origin. Used by the Next.js runtime and client-side code.
+  Example: `https://app.example.com`
 
 * `APP_URL`
-  Set this to the URL of the web app/API origin.
+  Set this to the URL of the web app/API origin. Used by server-side code and auth components (Better Auth).
+  This can be the same as `NEXT_APP_URL` for single-domain setups.
+  Example: `https://app.example.com`
 
 3. Start the stack:
 
@@ -59,7 +62,7 @@ The installer command will show up when you create one.
 
 ## API Documentation
 
-You can access it at ```http(s)://<WEB URL>/openapi```
+You can access it at ```http(s)://<your-web-url>/openapi``` where `<your-web-url>` is the value you set for `NEXT_APP_URL` or `APP_URL`
 
 ## Advisory
 

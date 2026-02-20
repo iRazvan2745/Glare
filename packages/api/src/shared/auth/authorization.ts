@@ -14,6 +14,7 @@ function toRole(value: string | null | undefined): RoleName {
   if (value == null) return "member";
   const normalized = value.trim().toLowerCase();
   if (normalized === "viewer") return "viewer";
+  if (normalized === "member") return "member";
   if (normalized === "operator") return "operator";
   if (normalized === "admin") return "admin";
   if (normalized === "owner") return "owner";

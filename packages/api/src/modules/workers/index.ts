@@ -706,7 +706,7 @@ export const workerRoutes = new Elysia()
 
     await db.delete(worker).where(eq(worker.id, existingWorker.id));
 
-    return status(204);
+    return new Response(null, { status: 204 });
   })
   .get("/api/workers/:id/sync-events", async ({ request, params, query, status }) => {
     const user = await getAuthenticatedUser(request);
@@ -891,7 +891,7 @@ export const workerRoutes = new Elysia()
       });
     }
 
-    return status(204);
+    return new Response(null, { status: 204 });
   })
   .post("/api/workers/backup-plans/sync", async ({ request, status }) => {
     const auth = await authenticateWorkerFromSyncToken(request.headers);
@@ -1028,88 +1028,91 @@ export const workerRoutes = new Elysia()
     const runId = crypto.randomUUID();
     const startedAt = new Date(Date.now() - (parsedBody.data.durationMs ?? 0));
     const finishedAt = new Date();
-    await db.insert(backupPlanRun).values({
-      id: runId,
-      planId: plan.id,
-      userId: plan.userId,
-      repositoryId: plan.repositoryId,
-      workerId: auth.workerId,
-      type: "backup",
-      status: parsedBody.data.status,
-      error: parsedBody.data.error ?? null,
-      durationMs: parsedBody.data.durationMs ?? null,
-      snapshotId: parsedBody.data.snapshotId ?? null,
-      snapshotTime: parsedBody.data.snapshotTime ? new Date(parsedBody.data.snapshotTime) : null,
-      outputJson: parsedBody.data.output ? JSON.stringify(parsedBody.data.output) : null,
-      startedAt,
-      finishedAt,
-    });
-
-    if (parsedBody.data.status === "success") {
-      await recordStorageUsageSample({
+    
+    await db.transaction(async (tx) => {
+      await tx.insert(backupPlanRun).values({
+        id: runId,
+        planId: plan.id,
         userId: plan.userId,
         repositoryId: plan.repositoryId,
-        runId,
-        output: parsedBody.data.output ?? null,
+        workerId: auth.workerId,
+        type: "backup",
+        status: parsedBody.data.status,
+        error: parsedBody.data.error ?? null,
+        durationMs: parsedBody.data.durationMs ?? null,
+        snapshotId: parsedBody.data.snapshotId ?? null,
+        snapshotTime: parsedBody.data.snapshotTime ? new Date(parsedBody.data.snapshotTime) : null,
+        outputJson: parsedBody.data.output ? JSON.stringify(parsedBody.data.output) : null,
+        startedAt,
+        finishedAt,
       });
-      const metric = await recordBackupMetric({
-        runId,
+
+      if (parsedBody.data.status === "success") {
+        await recordStorageUsageSample({
+          userId: plan.userId,
+          repositoryId: plan.repositoryId,
+          runId,
+          output: parsedBody.data.output ?? null,
+        });
+        const metric = await recordBackupMetric({
+          runId,
+          userId: plan.userId,
+          repositoryId: plan.repositoryId,
+          planId: plan.id,
+          workerId: auth.workerId,
+          snapshotId: parsedBody.data.snapshotId ?? null,
+          snapshotTime: parsedBody.data.snapshotTime ? new Date(parsedBody.data.snapshotTime) : null,
+          output: parsedBody.data.output ?? null,
+        });
+        if (metric) {
+          const anomaly = await detectBackupSizeAnomaly({
+            metricId: metric.id,
+            userId: plan.userId,
+            planId: plan.id,
+            repositoryId: plan.repositoryId,
+            actualBytes: metric.bytesAdded,
+          });
+          if (anomaly) {
+            await tx.insert(backupEvent).values({
+              id: crypto.randomUUID(),
+              userId: plan.userId,
+              repositoryId: plan.repositoryId,
+              planId: plan.id,
+              runId,
+              workerId: auth.workerId,
+              type: "backup_size_anomaly",
+              status: "open",
+              severity: anomaly.severity,
+              message: `Backup size anomaly detected (${anomaly.reason})`,
+              detailsJson: JSON.stringify({
+                expectedBytes: anomaly.expectedBytes,
+                actualBytes: metric.bytesAdded,
+                score: anomaly.score,
+              }),
+            });
+          }
+        }
+      }
+
+      await tx.insert(backupEvent).values({
+        id: crypto.randomUUID(),
         userId: plan.userId,
         repositoryId: plan.repositoryId,
         planId: plan.id,
+        runId,
         workerId: auth.workerId,
-        snapshotId: parsedBody.data.snapshotId ?? null,
-        snapshotTime: parsedBody.data.snapshotTime ? new Date(parsedBody.data.snapshotTime) : null,
-        output: parsedBody.data.output ?? null,
+        type: parsedBody.data.status === "success" ? "backup_completed" : "backup_failed",
+        status: parsedBody.data.status === "success" ? "resolved" : "open",
+        severity: parsedBody.data.status === "success" ? "info" : "error",
+        message:
+          parsedBody.data.status === "success"
+            ? "Backup completed"
+            : parsedBody.data.error || "Backup command failed",
+        detailsJson: JSON.stringify({
+          snapshotId: parsedBody.data.snapshotId ?? null,
+          snapshotTime: parsedBody.data.snapshotTime ?? null,
+        }),
       });
-      if (metric) {
-        const anomaly = await detectBackupSizeAnomaly({
-          metricId: metric.id,
-          userId: plan.userId,
-          planId: plan.id,
-          repositoryId: plan.repositoryId,
-          actualBytes: metric.bytesAdded,
-        });
-        if (anomaly) {
-          await db.insert(backupEvent).values({
-            id: crypto.randomUUID(),
-            userId: plan.userId,
-            repositoryId: plan.repositoryId,
-            planId: plan.id,
-            runId,
-            workerId: auth.workerId,
-            type: "backup_size_anomaly",
-            status: "open",
-            severity: anomaly.severity,
-            message: `Backup size anomaly detected (${anomaly.reason})`,
-            detailsJson: JSON.stringify({
-              expectedBytes: anomaly.expectedBytes,
-              actualBytes: metric.bytesAdded,
-              score: anomaly.score,
-            }),
-          });
-        }
-      }
-    }
-
-    await db.insert(backupEvent).values({
-      id: crypto.randomUUID(),
-      userId: plan.userId,
-      repositoryId: plan.repositoryId,
-      planId: plan.id,
-      runId,
-      workerId: auth.workerId,
-      type: parsedBody.data.status === "success" ? "backup_completed" : "backup_failed",
-      status: parsedBody.data.status === "success" ? "resolved" : "open",
-      severity: parsedBody.data.status === "success" ? "info" : "error",
-      message:
-        parsedBody.data.status === "success"
-          ? "Backup completed"
-          : parsedBody.data.error || "Backup command failed",
-      detailsJson: JSON.stringify({
-        snapshotId: parsedBody.data.snapshotId ?? null,
-        snapshotTime: parsedBody.data.snapshotTime ?? null,
-      }),
     });
 
     if (parsedBody.data.status === "failed") {
@@ -1139,7 +1142,7 @@ export const workerRoutes = new Elysia()
       })
       .where(eq(backupPlan.id, plan.id));
 
-    return status(204);
+    return new Response(null, { status: 204 });
   })
   .post("/api/workers/backup-runs/claim", async ({ request, body, status }) => {
     const auth = await authenticateWorkerFromSyncToken(request.headers);
@@ -1319,7 +1322,7 @@ export const workerRoutes = new Elysia()
     }
 
     if (!completionRow.runGroupId) {
-      return status(204);
+      return new Response(null, { status: 204 });
     }
 
     const summaryResult = await db.$client.query(
@@ -1348,7 +1351,7 @@ export const workerRoutes = new Elysia()
         }
       | undefined;
     if (!summary || summary.unfinishedCount > 0) {
-      return status(204);
+      return new Response(null, { status: 204 });
     }
 
     const firstStartedAt = summary.firstStartedAt ? new Date(summary.firstStartedAt) : null;
@@ -1374,7 +1377,7 @@ export const workerRoutes = new Elysia()
       })
       .where(eq(backupPlan.id, completionRow.planId));
 
-    return status(204);
+    return new Response(null, { status: 204 });
   })
   .post("/api/workers/:id/rotate-sync-token", async ({ request, params, status }) => {
     const user = await getAuthenticatedUser(request);
