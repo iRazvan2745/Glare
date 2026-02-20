@@ -9,10 +9,7 @@ COPY apps ./apps
 COPY packages ./packages
 
 RUN bun install --frozen-lockfile
-RUN bunx turbo run build --filter=server
-
-WORKDIR /app
 
 EXPOSE 3000
 
-CMD ["bun", "run", "apps/server/dist/index.mjs"]
+CMD ["bun", "run", "apps/server/index.ts"]
