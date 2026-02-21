@@ -954,11 +954,11 @@ export default function RepositoriesPage() {
 
   // Fetch storage sizes for initialized repos
   const repositoriesWithTrackedStorage = useMemo(
-    () => repositories.filter((r) => r.isInitialized && r.options["s3.bucket"]),
+    () => repositories.filter((r) => r.isInitialized && r.backend === "s3" && r.options["s3.bucket"]),
     [repositories],
   );
 
-  const storageSizeQueries = useQueries({
+  const storageBytesById = useQueries({
     queries: repositoriesWithTrackedStorage.map((r) => {
       const remote = `glare-${r.id.replace(/-/g, "")}:${r.options["s3.bucket"]}`;
       return {
@@ -966,25 +966,31 @@ export default function RepositoriesPage() {
         queryFn: () =>
           apiFetchJson<{ rclone?: { parsedJson?: { bytes?: number } | null } }>(
             `${apiBaseUrl}/api/rustic/repository-size?remote=${encodeURIComponent(remote)}`,
-          ).then((data) => ({ repoId: r.id, bytes: data?.rclone?.parsedJson?.bytes ?? null })),
+          ).then((data) => ({ bytes: data?.rclone?.parsedJson?.bytes })),
         staleTime: 5 * 60 * 1000,
       };
     }),
+    combine: (results) => {
+      const byRepoId: Record<string, number | null | undefined> = {};
+      for (const repo of repositoriesWithTrackedStorage) {
+        byRepoId[repo.id] = null;
+      }
+      for (const [index, result] of results.entries()) {
+        const repo = repositoriesWithTrackedStorage[index];
+        if (!repo) continue;
+        if (result.isError) {
+          byRepoId[repo.id] = undefined;
+          continue;
+        }
+        if (result.isPending || result.isLoading) {
+          byRepoId[repo.id] = null;
+          continue;
+        }
+        byRepoId[repo.id] = typeof result.data?.bytes === "number" ? result.data.bytes : undefined;
+      }
+      return byRepoId;
+    },
   });
-
-  const storageBytesById = useMemo(() => {
-    const byRepoId = new Map<string, number | null>();
-    for (const repo of repositoriesWithTrackedStorage) {
-      byRepoId.set(repo.id, null);
-    }
-    for (const query of storageSizeQueries) {
-      const data = query.data;
-      const repoId = data?.repoId;
-      if (!repoId) continue;
-      byRepoId.set(repoId, data.bytes);
-    }
-    return Object.fromEntries(byRepoId);
-  }, [repositoriesWithTrackedStorage, storageSizeQueries]);
 
   // Data loading
   const loadData = useCallback(async () => {

@@ -12,11 +12,12 @@ function toCsvLine(fields: Array<string | number | null>) {
         value.includes(",") ||
         value.includes("\n") ||
         value.includes("\r") ||
+        value.includes("\t") ||
         value.includes('"');
       if (needsQuoting) {
         return `"${value.replaceAll('"', '""')}"`;
       }
-      return /^[=+\-@]/.test(value) ? `'${value}` : value;
+      return /^\t?[=+\-@]/.test(value) ? `'${value}` : value;
     })
     .join(",");
 }

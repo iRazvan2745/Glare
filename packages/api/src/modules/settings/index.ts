@@ -3,11 +3,7 @@ import { userSettings } from "@glare/db/schema/settings";
 import { type } from "arktype";
 import { Elysia } from "elysia";
 import { getAuthenticatedUser } from "../../shared/auth/session";
-import {
-  isValidDiscordWebhookUrl,
-  sendDiscordNotification,
-  shouldSendForCategory,
-} from "../../shared/notifications";
+import { isValidDiscordWebhookUrl, sendDiscordNotification } from "../../shared/notifications";
 
 const settingsType = type({
   "productUpdates?": "boolean",
@@ -73,6 +69,30 @@ const defaultSettings = {
   notifyOnRepoChanges: false,
 } as const;
 
+function toSettingsResponse(source: {
+  productUpdates: boolean;
+  workerEvents: boolean;
+  weeklySummary: boolean;
+  newSigninAlerts: boolean;
+  discordWebhookEnabled: boolean;
+  discordWebhookUrl: string | null;
+  notifyOnBackupFailures: boolean;
+  notifyOnWorkerHealth: boolean;
+  notifyOnRepoChanges: boolean;
+}) {
+  return {
+    productUpdates: source.productUpdates,
+    workerEvents: source.workerEvents,
+    weeklySummary: source.weeklySummary,
+    newSigninAlerts: source.newSigninAlerts,
+    discordWebhookEnabled: source.discordWebhookEnabled,
+    discordWebhookUrl: source.discordWebhookUrl ?? "",
+    notifyOnBackupFailures: source.notifyOnBackupFailures,
+    notifyOnWorkerHealth: source.notifyOnWorkerHealth,
+    notifyOnRepoChanges: source.notifyOnRepoChanges,
+  };
+}
+
 export const settingsRoutes = new Elysia()
   .get("/api/settings", async ({ request, status }) => {
     const user = await getAuthenticatedUser(request);
@@ -86,17 +106,7 @@ export const settingsRoutes = new Elysia()
 
     if (existing) {
       return {
-        settings: {
-          productUpdates: existing.productUpdates,
-          workerEvents: existing.workerEvents,
-          weeklySummary: existing.weeklySummary,
-          newSigninAlerts: existing.newSigninAlerts,
-          discordWebhookEnabled: existing.discordWebhookEnabled,
-          discordWebhookUrl: existing.discordWebhookUrl ?? "",
-          notifyOnBackupFailures: existing.notifyOnBackupFailures,
-          notifyOnWorkerHealth: existing.notifyOnWorkerHealth,
-          notifyOnRepoChanges: existing.notifyOnRepoChanges,
-        },
+        settings: toSettingsResponse(existing),
       };
     }
 
@@ -114,21 +124,11 @@ export const settingsRoutes = new Elysia()
 
     if (fetchedSettings) {
       return {
-        settings: {
-          productUpdates: fetchedSettings.productUpdates,
-          workerEvents: fetchedSettings.workerEvents,
-          weeklySummary: fetchedSettings.weeklySummary,
-          newSigninAlerts: fetchedSettings.newSigninAlerts,
-          discordWebhookEnabled: fetchedSettings.discordWebhookEnabled,
-          discordWebhookUrl: fetchedSettings.discordWebhookUrl ?? "",
-          notifyOnBackupFailures: fetchedSettings.notifyOnBackupFailures,
-          notifyOnWorkerHealth: fetchedSettings.notifyOnWorkerHealth,
-          notifyOnRepoChanges: fetchedSettings.notifyOnRepoChanges,
-        },
+        settings: toSettingsResponse(fetchedSettings),
       };
     }
 
-    return { settings: defaultSettings };
+    return { settings: toSettingsResponse(defaultSettings) };
   })
   .post("/api/settings", async ({ request, body, status }) => {
     const user = await getAuthenticatedUser(request);
@@ -173,14 +173,11 @@ export const settingsRoutes = new Elysia()
     if (!currentSettings?.discordWebhookEnabled || !currentSettings.discordWebhookUrl?.trim()) {
       return status(422, { error: "Discord webhook not configured or disabled" });
     }
-    if (!shouldSendForCategory("backup_failures", currentSettings)) {
-      return status(422, { error: "backup_failures notifications disabled" });
-    }
 
     try {
       const delivered = await sendDiscordNotification({
         userId: user.id,
-        category: "backup_failures",
+        category: "settings_test",
         title: "Glare test notification",
         message: "Discord webhook delivery is configured and operational.",
         severity: "info",

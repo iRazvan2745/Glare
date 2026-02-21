@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 
 import { logError, logWarn } from "./logger";
 
-type NotificationCategory = "backup_failures" | "worker_health" | "repo_changes";
+type NotificationCategory = "backup_failures" | "worker_health" | "repo_changes" | "settings_test";
 type NotificationSeverity = "info" | "warning" | "error";
 
 type DiscordNotificationInput = {
@@ -31,6 +31,8 @@ export function shouldSendForCategory(
       return settings.notifyOnWorkerHealth;
     case "repo_changes":
       return settings.notifyOnRepoChanges;
+    case "settings_test":
+      return true;
     default:
       return false;
   }

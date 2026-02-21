@@ -1,6 +1,6 @@
 type UserWithRole = { id: string; role?: string | null } | null;
 
-const ROLE_RANK = {
+export const ROLE_RANK = {
   viewer: 0,
   member: 1,
   operator: 1,

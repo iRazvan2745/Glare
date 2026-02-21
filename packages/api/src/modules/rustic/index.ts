@@ -750,6 +750,7 @@ function filterSensitiveOptions(options: Record<string, string>): Record<string,
       normalized.includes("access_key") ||
       normalized.includes("access-key") ||
       compact.includes("sessiontoken") ||
+      compact.includes("token") ||
       compact.includes("accesskey");
     next[key] = isSensitive ? "[redacted]" : value;
   }
@@ -2275,8 +2276,10 @@ async function proxyToWorker(
 
   logInfo("proxy request", { method, url, hasBody: body !== undefined });
   let response: Response;
+  let responseText = "";
   try {
     response = await fetch(url, init);
+    responseText = await response.text();
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
       logWarn("proxy request timed out", { method, url, timeoutMs });
@@ -2286,7 +2289,6 @@ async function proxyToWorker(
   } finally {
     clearTimeout(timeoutHandle);
   }
-  const responseText = await response.text();
   let data: unknown = null;
   if (responseText.length > 0) {
     try {

@@ -5,7 +5,7 @@ import { type } from "arktype";
 import { and, eq, ne } from "drizzle-orm";
 import { Elysia } from "elysia";
 import { getAuthenticatedUser } from "../../shared/auth/session";
-import { hasRoleAtLeast } from "../../shared/auth/authorization";
+import { hasRoleAtLeast, ROLE_RANK } from "../../shared/auth/authorization";
 
 const updateUserType = type({
   "name?": "string",
@@ -16,18 +16,21 @@ const updateWorkspaceSettingsType = type({
   "signupsEnabled?": "boolean",
 });
 
-const ROLE_RANK: Record<string, number> = {
-  viewer: 0,
-  member: 1,
-  operator: 1,
-  admin: 2,
-  owner: 3,
-};
-
 function roleRank(role: string | null | undefined) {
   const normalized = (role ?? "member").trim().toLowerCase();
-  return ROLE_RANK[normalized] ?? 0;
+  if (normalized in ROLE_RANK) {
+    return ROLE_RANK[normalized as keyof typeof ROLE_RANK];
+  }
+  return 0;
 }
+
+const SIGNUP_STATUS_CACHE_TTL_MS = 5_000;
+let signupStatusCache:
+  | {
+      value: boolean;
+      expiresAt: number;
+    }
+  | undefined;
 
 function isEmailUniqueConstraintError(error: unknown) {
   const candidate = error as
@@ -96,7 +99,14 @@ async function getOrCreateWorkspaceSettings() {
 
 export const adminRoutes = new Elysia()
   .get("/api/public/signup-status", async () => {
+    if (signupStatusCache && signupStatusCache.expiresAt > Date.now()) {
+      return { signupsEnabled: signupStatusCache.value };
+    }
     const settings = await getOrCreateWorkspaceSettings();
+    signupStatusCache = {
+      value: settings.signupsEnabled,
+      expiresAt: Date.now() + SIGNUP_STATUS_CACHE_TTL_MS,
+    };
     return { signupsEnabled: settings.signupsEnabled };
   })
   .get("/api/admin/settings", async ({ request, status }) => {
@@ -121,6 +131,10 @@ export const adminRoutes = new Elysia()
       .values({ id: "default", ...updates })
       .onConflictDoUpdate({ target: workspaceSettings.id, set: updates });
     const settings = await getOrCreateWorkspaceSettings();
+    signupStatusCache = {
+      value: settings.signupsEnabled,
+      expiresAt: Date.now() + SIGNUP_STATUS_CACHE_TTL_MS,
+    };
     return { settings: { signupsEnabled: settings.signupsEnabled } };
   })
   .patch("/api/admin/users/:userId", async ({ request, body, params, status }) => {
@@ -132,11 +146,12 @@ export const adminRoutes = new Elysia()
       return status(400, { error: "Invalid payload" });
     }
     const updates = body as { name?: string; email?: string };
-    if (
-      typeof updates.name === "string" &&
-      (updates.name.length < 1 || updates.name.length > 120)
-    ) {
-      return status(400, { error: "Invalid payload" });
+    if (typeof updates.name === "string") {
+      const trimmed = updates.name.trim();
+      if (trimmed.length === 0 || trimmed.length > 120) {
+        return status(400, { error: "Invalid payload" });
+      }
+      updates.name = trimmed;
     }
     if (Object.keys(updates).length === 0) {
       return status(400, { error: "No fields to update" });
