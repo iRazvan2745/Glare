@@ -19,7 +19,7 @@ ARG APP_URL="http://localhost:3002"
 ENV APP_URL=$APP_URL
 
 ARG DATABASE_URL="postgresql://postgres:postgres@localhost:5432/glare"
-RUN DATABASE_URL=$DATABASE_URL bunx turbo run build --filter=web
+RUN DATABASE_URL="$DATABASE_URL" bunx turbo run build --filter=web
 
 WORKDIR /app/apps/web
 USER bun
