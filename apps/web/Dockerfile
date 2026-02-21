@@ -25,4 +25,4 @@ WORKDIR /app/apps/web
 USER bun
 EXPOSE 3000
 
-CMD ["sh", "-c", "cd /app && bun run db:migrate && cd /app/apps/web && bun run start"]
+CMD ["sh", "-c", "cd /app && bun run db:generate && bun run db:push && cd /app/apps/web && bun run start"]
