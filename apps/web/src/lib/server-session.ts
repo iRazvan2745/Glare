@@ -1,5 +1,5 @@
 import { headers } from "next/headers";
-import { auth } from "@glare/auth";
+import { getAuth } from "@glare/auth";
 
 type ServerAuthSession = {
   user: {
@@ -13,6 +13,7 @@ type ServerAuthSession = {
 };
 
 export async function getServerSession(): Promise<ServerAuthSession | null> {
+  const auth = await getAuth();
   const session = await auth.api.getSession({
     headers: await headers(),
   });

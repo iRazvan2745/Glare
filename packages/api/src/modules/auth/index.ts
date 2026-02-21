@@ -1,10 +1,10 @@
-import { auth } from "@glare/auth";
-import { db } from "@glare/db";
+import { getAuth } from "@glare/auth";
 import { Elysia } from "elysia";
 import { logError } from "../../shared/logger";
 
 async function isSignupsEnabled(): Promise<boolean> {
   try {
+    const { db } = await import("@glare/db");
     const settings = await db.query.workspaceSettings.findFirst({
       where: (table, { eq }) => eq(table.id, "default"),
     });
@@ -31,6 +31,7 @@ export const authRoutes = new Elysia().all("/api/auth/*", async ({ request, stat
         }
       }
     }
+    const auth = await getAuth();
     return auth.handler(request);
   }
 

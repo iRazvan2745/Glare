@@ -1,7 +1,5 @@
-import { db } from "@glare/db";
 import * as schema from "@glare/db/schema/auth";
 import { betterAuth } from "better-auth";
-import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { admin } from "better-auth/plugins/admin";
 import { lastLoginMethod } from "better-auth/plugins";
 
@@ -17,39 +15,51 @@ if (isProduction && !configuredBaseUrl) {
     "Missing auth base URL in production. Set NEXT_APP_URL, APP_URL, BETTER_AUTH_BASE_URL, or BETTER_AUTH_URL.",
   );
 }
+
 const trustedOrigins = Array.from(
   new Set(
-    [
-      configuredBaseUrl,
-      process.env.WEB_ORIGIN,
-      process.env.NEXT_PUBLIC_APP_URL,
-    ]
+    [configuredBaseUrl, process.env.WEB_ORIGIN, process.env.NEXT_PUBLIC_APP_URL]
       .filter((value): value is string => Boolean(value && value.trim().length > 0))
       .map((value) => value.replace(/\/+$/, "")),
   ),
 );
-export const auth = betterAuth({
-  baseURL: configuredBaseUrl,
-  database: drizzleAdapter(db, {
-    provider: "pg",
 
-    schema: schema,
-  }),
-  trustedOrigins,
-  emailAndPassword: {
-    enabled: true,
-  },
-  advanced: {
-    defaultCookieAttributes: {
-      sameSite: "lax",
-      secure: isProduction,
-      httpOnly: true,
-    },
-  },
-  plugins: [
-    admin(),
-    lastLoginMethod({
-      storeInDatabase: true,
-    }),
-  ],
-});
+let authPromise: Promise<ReturnType<typeof betterAuth>> | null = null;
+
+export function getAuth() {
+  if (!authPromise) {
+    authPromise = (async () => {
+      const [{ db }, { drizzleAdapter }] = await Promise.all([
+        import("@glare/db"),
+        import("better-auth/adapters/drizzle"),
+      ]);
+
+      return betterAuth({
+        baseURL: configuredBaseUrl,
+        database: drizzleAdapter(db, {
+          provider: "pg",
+          schema,
+        }),
+        trustedOrigins,
+        emailAndPassword: {
+          enabled: true,
+        },
+        advanced: {
+          defaultCookieAttributes: {
+            sameSite: "lax",
+            secure: isProduction,
+            httpOnly: true,
+          },
+        },
+        plugins: [
+          admin(),
+          lastLoginMethod({
+            storeInDatabase: true,
+          }),
+        ],
+      });
+    })();
+  }
+
+  return authPromise;
+}

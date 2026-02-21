@@ -142,6 +142,14 @@ export const adminRoutes = new Elysia()
       return status(400, { error: "No fields to update" });
     }
 
+    const requesterUser = await db.query.user.findFirst({
+      where: eq(user.id, authedUser.id),
+      columns: { id: true, role: true },
+    });
+    if (!requesterUser) {
+      return status(403, { error: "Forbidden" });
+    }
+
     const targetUser = await db.query.user.findFirst({
       where: eq(user.id, params.userId),
       columns: { id: true, role: true },
@@ -149,7 +157,7 @@ export const adminRoutes = new Elysia()
     if (!targetUser) {
       return status(404, { error: "User not found" });
     }
-    const requesterRoleRank = roleRank(authedUser?.role);
+    const requesterRoleRank = roleRank(requesterUser.role);
     const targetRoleRank = roleRank(targetUser?.role);
     if (targetRoleRank >= requesterRoleRank) {
       return status(403, { error: "Forbidden" });
@@ -193,6 +201,14 @@ export const adminRoutes = new Elysia()
       return status(400, { error: "Cannot delete your own account" });
     }
 
+    const requesterUser = await db.query.user.findFirst({
+      where: eq(user.id, authedUser.id),
+      columns: { id: true, role: true },
+    });
+    if (!requesterUser) {
+      return status(403, { error: "Forbidden" });
+    }
+
     const targetUser = await db.query.user.findFirst({
       where: eq(user.id, params.userId),
       columns: { id: true, role: true },
@@ -200,7 +216,7 @@ export const adminRoutes = new Elysia()
     if (!targetUser) {
       return status(404, { error: "User not found" });
     }
-    const requesterRoleRank = roleRank(authedUser?.role);
+    const requesterRoleRank = roleRank(requesterUser.role);
     const targetRoleRank = roleRank(targetUser?.role);
     if (targetRoleRank >= requesterRoleRank) {
       return status(403, { error: "Forbidden" });
