@@ -1,4 +1,5 @@
-const rawApiBaseUrl = process.env.NEXT_APP_URL ?? process.env.APP_URL ?? "";
+const rawApiBaseUrl =
+  process.env.NEXT_PUBLIC_NEXT_APP_URL ?? process.env.NEXT_PUBLIC_APP_URL ?? "";
 
 export const apiBaseUrl = rawApiBaseUrl.replace(/\/+$/, "");
 

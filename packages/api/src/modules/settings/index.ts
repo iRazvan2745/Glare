@@ -174,7 +174,7 @@ export const settingsRoutes = new Elysia()
       return status(422, { error: "Discord webhook not configured or disabled" });
     }
     if (!shouldSendForCategory("backup_failures", currentSettings)) {
-      return status(204);
+      return status(422, { error: "backup_failures notifications disabled" });
     }
 
     try {

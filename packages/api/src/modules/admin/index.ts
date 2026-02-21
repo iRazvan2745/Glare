@@ -36,24 +36,49 @@ function isEmailUniqueConstraintError(error: unknown) {
         detail?: string;
         constraint?: string;
         meta?: { target?: string | string[] };
+        cause?: unknown;
       }
     | undefined;
 
-  if (candidate?.code === "P2002") {
-    const target = candidate.meta?.target;
-    if (Array.isArray(target)) {
-      return target.some((entry) => String(entry).toLowerCase().includes("email"));
+  const matches = (
+    current:
+      | {
+          code?: string;
+          detail?: string;
+          constraint?: string;
+          meta?: { target?: string | string[] };
+        }
+      | undefined,
+  ) => {
+    if (!current) return false;
+    if (current.code === "P2002") {
+      const target = current.meta?.target;
+      if (Array.isArray(target)) {
+        return target.some((entry) => String(entry).toLowerCase().includes("email"));
+      }
+      return typeof target === "string" && target.toLowerCase().includes("email");
     }
-    return typeof target === "string" && target.toLowerCase().includes("email");
+    if (current.code === "23505") {
+      const constraint = (current.constraint ?? "").toLowerCase();
+      const detail = (current.detail ?? "").toLowerCase();
+      return constraint.includes("email") || detail.includes("email");
+    }
+    return false;
+  };
+
+  if (matches(candidate)) {
+    return true;
   }
 
-  if (candidate?.code === "23505") {
-    const constraint = (candidate.constraint ?? "").toLowerCase();
-    const detail = (candidate.detail ?? "").toLowerCase();
-    return constraint.includes("email") || detail.includes("email");
-  }
-
-  return false;
+  const causeCandidate = candidate?.cause as
+    | {
+        code?: string;
+        detail?: string;
+        constraint?: string;
+        meta?: { target?: string | string[] };
+      }
+    | undefined;
+  return matches(causeCandidate);
 }
 
 async function getOrCreateWorkspaceSettings() {

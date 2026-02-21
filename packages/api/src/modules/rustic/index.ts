@@ -740,6 +740,7 @@ function filterSensitiveOptions(options: Record<string, string>): Record<string,
   const next: Record<string, string> = {};
   for (const [key, value] of Object.entries(options)) {
     const normalized = key.toLowerCase();
+    const compact = normalized.replace(/[^a-z0-9]/g, "");
     const isSensitive =
       normalized.includes("secret") ||
       normalized.includes("password") ||
@@ -747,7 +748,9 @@ function filterSensitiveOptions(options: Record<string, string>): Record<string,
       normalized.endsWith("session_token") ||
       normalized === "s3.access-key-id" ||
       normalized.includes("access_key") ||
-      normalized.includes("access-key");
+      normalized.includes("access-key") ||
+      compact.includes("sessiontoken") ||
+      compact.includes("accesskey");
     next[key] = isSensitive ? "[redacted]" : value;
   }
   return next;

@@ -807,7 +807,7 @@ function RepositoryListItem({
   onEdit: () => void;
   onDelete: () => void;
   isInitializing: boolean;
-  storageBytes: number | null;
+  storageBytes: number | null | undefined;
 }) {
   const BackendIcon =
     BACKEND_OPTIONS.find((b) => b.value === repo.backend)?.icon ?? RiDatabase2Line;
@@ -881,10 +881,12 @@ function RepositoryListItem({
                   Initializing
                 </span>
               ) : repo.isInitialized ? (
-                storageBytes != null ? (
-                  formatBytes(storageBytes)
-                ) : (
+                storageBytes === undefined ? (
+                  "—"
+                ) : storageBytes === null ? (
                   <Spinner />
+                ) : (
+                  formatBytes(storageBytes)
                 )
               ) : (
                 "Init"
@@ -951,31 +953,38 @@ export default function RepositoriesPage() {
   }, [repositories]);
 
   // Fetch storage sizes for initialized repos
+  const repositoriesWithTrackedStorage = useMemo(
+    () => repositories.filter((r) => r.isInitialized && r.options["s3.bucket"]),
+    [repositories],
+  );
+
   const storageSizeQueries = useQueries({
-    queries: repositories
-      .filter((r) => r.isInitialized && r.options["s3.bucket"])
-      .map((r) => {
-        const remote = `glare-${r.id.replace(/-/g, "")}:${r.options["s3.bucket"]}`;
-        return {
-          queryKey: ["repo-storage", r.id],
-          queryFn: () =>
-            apiFetchJson<{ rclone?: { parsedJson?: { bytes?: number } | null } }>(
-              `${apiBaseUrl}/api/rustic/repository-size?remote=${encodeURIComponent(remote)}`,
-            ).then((data) => ({ repoId: r.id, bytes: data?.rclone?.parsedJson?.bytes ?? null })),
-          staleTime: 5 * 60 * 1000,
-        };
-      }),
+    queries: repositoriesWithTrackedStorage.map((r) => {
+      const remote = `glare-${r.id.replace(/-/g, "")}:${r.options["s3.bucket"]}`;
+      return {
+        queryKey: ["repo-storage", r.id],
+        queryFn: () =>
+          apiFetchJson<{ rclone?: { parsedJson?: { bytes?: number } | null } }>(
+            `${apiBaseUrl}/api/rustic/repository-size?remote=${encodeURIComponent(remote)}`,
+          ).then((data) => ({ repoId: r.id, bytes: data?.rclone?.parsedJson?.bytes ?? null })),
+        staleTime: 5 * 60 * 1000,
+      };
+    }),
   });
 
   const storageBytesById = useMemo(() => {
-    return Object.fromEntries(
-      storageSizeQueries
-        .map((query) =>
-          query.data?.repoId ? ([query.data.repoId, query.data.bytes] as const) : null,
-        )
-        .filter((entry): entry is readonly [string, number | null] => entry !== null),
-    );
-  }, [storageSizeQueries]);
+    const byRepoId = new Map<string, number | null>();
+    for (const repo of repositoriesWithTrackedStorage) {
+      byRepoId.set(repo.id, null);
+    }
+    for (const query of storageSizeQueries) {
+      const data = query.data;
+      const repoId = data?.repoId;
+      if (!repoId) continue;
+      byRepoId.set(repoId, data.bytes);
+    }
+    return Object.fromEntries(byRepoId);
+  }, [repositoriesWithTrackedStorage, storageSizeQueries]);
 
   // Data loading
   const loadData = useCallback(async () => {
@@ -1236,7 +1245,7 @@ export default function RepositoriesPage() {
                 onEdit={() => beginEdit(repo)}
                 onDelete={() => setDeletingId(repo.id)}
                 isInitializing={initializingId === repo.id}
-                storageBytes={storageBytesById[repo.id] ?? null}
+                storageBytes={storageBytesById[repo.id]}
               />
             ))}
         </CardContent>

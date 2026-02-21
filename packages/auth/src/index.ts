@@ -12,11 +12,15 @@ const configuredBaseUrl =
   process.env.BETTER_AUTH_BASE_URL ||
   process.env.BETTER_AUTH_URL ||
   (isProduction ? undefined : "http://localhost:3002");
+if (isProduction && !configuredBaseUrl) {
+  throw new Error(
+    "Missing auth base URL in production. Set NEXT_APP_URL, APP_URL, BETTER_AUTH_BASE_URL, or BETTER_AUTH_URL.",
+  );
+}
 const trustedOrigins = Array.from(
   new Set(
     [
       configuredBaseUrl,
-      process.env.APP_URL,
       process.env.WEB_ORIGIN,
       process.env.NEXT_PUBLIC_APP_URL,
     ]

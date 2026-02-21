@@ -8,28 +8,28 @@ function toCsvLine(fields: Array<string | number | null>) {
   return fields
     .map((field) => {
       const value = field == null ? "" : String(field);
-      const safe = /^[=+\-@]/.test(value) ? `'${value}` : value;
-      if (
-        safe.includes(",") ||
-        safe.includes("\n") ||
-        safe.includes("\r") ||
-        safe.includes('"')
-      ) {
-        return `"${safe.replaceAll('"', '""')}"`;
+      const needsQuoting =
+        value.includes(",") ||
+        value.includes("\n") ||
+        value.includes("\r") ||
+        value.includes('"');
+      if (needsQuoting) {
+        return `"${value.replaceAll('"', '""')}"`;
       }
-      return safe;
+      return /^[=+\-@]/.test(value) ? `'${value}` : value;
     })
     .join(",");
 }
 
 function sanitizeError(error: string | null): string | null {
   if (!error) return null;
-  let sanitized = error.replace(/\r\n?/g, "\n").replace(/\n+/g, " | ").trim();
+  let sanitized = error.replace(/\r\n?/g, "\n");
+  sanitized = sanitized.replace(/^\s*at[^\r\n]*/gim, "[redacted-stack]");
+  sanitized = sanitized.replace(/\n+/g, " | ").trim();
   sanitized = sanitized.replace(
     /(?:[A-Za-z]:\\[^\s|]+|(?:\/[A-Za-z0-9._-]+){2,})/g,
     "[redacted-path]",
   );
-  sanitized = sanitized.replace(/\bat\s+[^|]+/gi, "[redacted-stack]");
   if (sanitized.length > 400) {
     sanitized = `${sanitized.slice(0, 400)}...`;
   }

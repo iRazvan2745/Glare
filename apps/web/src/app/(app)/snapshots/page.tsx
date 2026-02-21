@@ -356,6 +356,7 @@ function SnapshotsPageContent() {
     let eventSource: EventSource | null = null;
     let fallbackIntervalId: number | null = null;
     let reconnectTimeoutId: number | null = null;
+    let streamRefreshTimeoutId: number | null = null;
 
     const refreshSilently = (options?: { includeActivity?: boolean }) => {
       const includeActivity = options?.includeActivity ?? true;
@@ -385,6 +386,14 @@ function SnapshotsPageContent() {
       fallbackIntervalId = null;
     };
 
+    const scheduleStreamRefresh = () => {
+      if (streamRefreshTimeoutId !== null) return;
+      streamRefreshTimeoutId = window.setTimeout(() => {
+        streamRefreshTimeoutId = null;
+        refreshSilently();
+      }, 1_000);
+    };
+
     const connectEventSource = () => {
       if (isDisposed) return;
 
@@ -403,7 +412,7 @@ function SnapshotsPageContent() {
       }
 
       const onStreamEvent = () => {
-        refreshSilently();
+        scheduleStreamRefresh();
       };
 
       eventSource.onopen = () => {
@@ -412,7 +421,7 @@ function SnapshotsPageContent() {
           reconnectTimeoutId = null;
         }
         clearFallbackPolling();
-        refreshSilently();
+        scheduleStreamRefresh();
       };
       eventSource.onmessage = onStreamEvent;
       eventSource.addEventListener("ready", onStreamEvent);
@@ -445,6 +454,9 @@ function SnapshotsPageContent() {
       }
       if (reconnectTimeoutId !== null) {
         window.clearTimeout(reconnectTimeoutId);
+      }
+      if (streamRefreshTimeoutId !== null) {
+        window.clearTimeout(streamRefreshTimeoutId);
       }
       if (fallbackIntervalId !== null) {
         window.clearInterval(fallbackIntervalId);
