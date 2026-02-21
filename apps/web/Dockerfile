@@ -18,7 +18,8 @@ ENV NEXT_APP_URL=$NEXT_APP_URL
 ARG APP_URL="http://localhost:3002"
 ENV APP_URL=$APP_URL
 
-RUN bunx turbo run build --filter=web
+ARG DATABASE_URL="postgresql://postgres:postgres@localhost:5432/glare"
+RUN DATABASE_URL=$DATABASE_URL bunx turbo run build --filter=web
 
 WORKDIR /app/apps/web
 USER bun

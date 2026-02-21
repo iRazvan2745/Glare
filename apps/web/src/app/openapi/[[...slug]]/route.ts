@@ -1,8 +1,7 @@
-import { handleApiRequest } from "@glare/api";
-
 export const runtime = "nodejs";
 
 async function handler(request: Request) {
+  const { handleApiRequest } = await import("@glare/api");
   return handleApiRequest(request);
 }
 
