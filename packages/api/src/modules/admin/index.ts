@@ -4,6 +4,7 @@ import { user } from "@glare/db/schema/auth";
 import { type } from "arktype";
 import { and, eq, ne } from "drizzle-orm";
 import { Elysia } from "elysia";
+import { logError } from "../../shared/logger";
 import { getAuthenticatedUser } from "../../shared/auth/session";
 import { hasRoleAtLeast, ROLE_RANK } from "../../shared/auth/authorization";
 
@@ -94,7 +95,40 @@ async function getOrCreateWorkspaceSettings() {
     where: (table, { eq }) => eq(table.id, "default"),
   });
   if (persisted) return persisted;
-  return { id: "default", signupsEnabled: true, createdAt: new Date(), updatedAt: new Date() };
+  logError("workspace settings row missing after upsert", {
+    id: "default",
+    operation: "getOrCreateWorkspaceSettings",
+  });
+  throw new Error("Workspace settings unavailable");
+}
+
+async function assertCanActOnUser(requesterId: string, targetId: string) {
+  const [requesterUser, targetUser] = await Promise.all([
+    db.query.user.findFirst({
+      where: eq(user.id, requesterId),
+      columns: { id: true, role: true },
+    }),
+    db.query.user.findFirst({
+      where: eq(user.id, targetId),
+      columns: { id: true, role: true },
+    }),
+  ]);
+
+  if (!requesterUser) {
+    return { code: 403, error: "Forbidden" } as const;
+  }
+
+  if (!targetUser) {
+    return { code: 404, error: "User not found" } as const;
+  }
+
+  const requesterRoleRank = roleRank(requesterUser.role);
+  const targetRoleRank = roleRank(targetUser.role);
+  if (targetRoleRank >= requesterRoleRank) {
+    return { code: 403, error: "Forbidden" } as const;
+  }
+
+  return null;
 }
 
 export const adminRoutes = new Elysia()
@@ -157,25 +191,9 @@ export const adminRoutes = new Elysia()
       return status(400, { error: "No fields to update" });
     }
 
-    const requesterUser = await db.query.user.findFirst({
-      where: eq(user.id, authedUser.id),
-      columns: { id: true, role: true },
-    });
-    if (!requesterUser) {
-      return status(403, { error: "Forbidden" });
-    }
-
-    const targetUser = await db.query.user.findFirst({
-      where: eq(user.id, params.userId),
-      columns: { id: true, role: true },
-    });
-    if (!targetUser) {
-      return status(404, { error: "User not found" });
-    }
-    const requesterRoleRank = roleRank(requesterUser.role);
-    const targetRoleRank = roleRank(targetUser?.role);
-    if (targetRoleRank >= requesterRoleRank) {
-      return status(403, { error: "Forbidden" });
+    const guardError = await assertCanActOnUser(authedUser.id, params.userId);
+    if (guardError) {
+      return status(guardError.code, { error: guardError.error });
     }
 
     if (updates.email) {
@@ -216,25 +234,9 @@ export const adminRoutes = new Elysia()
       return status(400, { error: "Cannot delete your own account" });
     }
 
-    const requesterUser = await db.query.user.findFirst({
-      where: eq(user.id, authedUser.id),
-      columns: { id: true, role: true },
-    });
-    if (!requesterUser) {
-      return status(403, { error: "Forbidden" });
-    }
-
-    const targetUser = await db.query.user.findFirst({
-      where: eq(user.id, params.userId),
-      columns: { id: true, role: true },
-    });
-    if (!targetUser) {
-      return status(404, { error: "User not found" });
-    }
-    const requesterRoleRank = roleRank(requesterUser.role);
-    const targetRoleRank = roleRank(targetUser?.role);
-    if (targetRoleRank >= requesterRoleRank) {
-      return status(403, { error: "Forbidden" });
+    const guardError = await assertCanActOnUser(authedUser.id, params.userId);
+    if (guardError) {
+      return status(guardError.code, { error: guardError.error });
     }
 
     const deletedRows = await db

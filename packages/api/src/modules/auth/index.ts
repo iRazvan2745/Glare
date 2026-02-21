@@ -13,7 +13,7 @@ async function isSignupsEnabled(): Promise<boolean> {
     logError("failed to load signup settings", {
       error: error instanceof Error ? error.message : String(error),
     });
-    return false;
+    throw error;
   }
 }
 
@@ -22,7 +22,15 @@ export const authRoutes = new Elysia().all("/api/auth/*", async ({ request, stat
     if (request.method === "POST") {
       const url = new URL(request.url);
       if (url.pathname.endsWith("/sign-up/email")) {
-        const enabled = await isSignupsEnabled();
+        let enabled: boolean;
+        try {
+          enabled = await isSignupsEnabled();
+        } catch {
+          return new Response(JSON.stringify({ message: "Service temporarily unavailable" }), {
+            status: 503,
+            headers: { "content-type": "application/json" },
+          });
+        }
         if (!enabled) {
           return new Response(
             JSON.stringify({ message: "Sign-ups are currently disabled by the administrator" }),
