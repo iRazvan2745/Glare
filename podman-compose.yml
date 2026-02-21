@@ -17,29 +17,36 @@ services:
       retries: 5
     restart: unless-stopped
 
-  server:
-    image: ghcr.io/iRazvan2745/glare-server
-    container_name: glare-server
-    command: ["bun", "run", "apps/server/dist/index.mjs"]
+  web:
+    image: ghcr.io/iRazvan2745/glare-web
+    container_name: glare-web
+    ports:
+      - "3002:3000"
     environment:
       DATABASE_URL: postgresql://postgres:password@postgres:5432/glare
       BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me}
-      BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://localhost:3000}
-      CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:3002}
+      NEXT_APP_URL: ${NEXT_APP_URL:-http://localhost:3002}
+      APP_URL: ${APP_URL:-http://localhost:3002}
+      PORT: 3000
       NODE_ENV: production
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
 
-  web:
-    image: ghcr.io/iRazvan2745/glare-web
-    container_name: glare-web
+  jobs:
+    image: ghcr.io/iRazvan2745/glare-server
+    container_name: glare-jobs
+    command: ["bun", "run", "apps/server/dist/index.mjs"]
     environment:
-      NEXT_PUBLIC_SERVER_URL: ${NEXT_PUBLIC_SERVER_URL:-http://localhost:3000}
+      DATABASE_URL: postgresql://postgres:password@postgres:5432/glare
+      BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET:-change-me}
+      NEXT_APP_URL: ${NEXT_APP_URL:-http://localhost:3002}
+      APP_URL: ${APP_URL:-http://localhost:3002}
       NODE_ENV: production
     depends_on:
-      - server
+      postgres:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

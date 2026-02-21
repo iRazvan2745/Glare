@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import {
   RiArrowRightSLine,
   RiDownloadCloud2Line,
@@ -35,14 +36,12 @@ import { parseAsBoolean, parseAsString, useQueryState } from "nuqs";
 import { Spinner } from "@/components/ui/spinner";
 
 import {
-  API_BASE,
   type WorkerRecord,
   type RepositoryRecord,
   type SnapshotRecord,
   type SnapshotWorkerAttribution,
   type SnapshotListItem,
   type SnapshotActivity,
-  type SnapshotWsMessage,
   type FileEntry,
   type FileTreeNode,
   numberToSize,
@@ -56,7 +55,7 @@ import {
   parseTimestampMs,
   getSnapshotFileLoadHint,
   sanitizeWorkerErrorMessage,
-  buildSnapshotStreamWebSocketUrl,
+  buildSnapshotStreamSseUrl,
   monthKey,
   dayKey,
 } from "./_components/snapshot-helpers";
@@ -144,7 +143,7 @@ function SnapshotsPageContent() {
     try {
       const data = await apiFetchJson<{
         repositories?: RepositoryRecord[];
-      }>(`${API_BASE}/rustic/repositories`, {
+      }>(`${apiBaseUrl}/api/rustic/repositories`, {
         method: "GET",
         retries: 1,
       });
@@ -187,7 +186,7 @@ function SnapshotsPageContent() {
             parsed_json?: unknown;
             stdout?: string;
           };
-        }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshots`, {
+        }>(`${apiBaseUrl}/api/rustic/repositories/${repositoryId}/snapshots`, {
           method: "POST",
           retries: 1,
         });
@@ -229,7 +228,7 @@ function SnapshotsPageContent() {
       try {
         const data = await apiFetchJson<{
           snapshots?: SnapshotWorkerAttribution[];
-        }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshot-workers`, {
+        }>(`${apiBaseUrl}/api/rustic/repositories/${repositoryId}/snapshot-workers`, {
           method: "GET",
           retries: 1,
         });
@@ -264,7 +263,7 @@ function SnapshotsPageContent() {
       try {
         const data = await apiFetchJson<{
           activities?: SnapshotActivity[];
-        }>(`${API_BASE}/rustic/repositories/${repositoryId}/snapshot-activity`, {
+        }>(`${apiBaseUrl}/api/rustic/repositories/${repositoryId}/snapshot-activity`, {
           method: "GET",
           retries: 1,
         });
@@ -311,7 +310,7 @@ function SnapshotsPageContent() {
             parsed_json?: unknown;
             stdout?: string;
           };
-        }>(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/snapshot/files`, {
+        }>(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/snapshot/files`, {
           method: "POST",
           body: JSON.stringify({
             snapshot: normalizedSnapshotId,
@@ -354,10 +353,10 @@ function SnapshotsPageContent() {
   useEffect(() => {
     if (!selectedRepositoryId) return;
     let isDisposed = false;
-    let websocket: WebSocket | null = null;
+    let eventSource: EventSource | null = null;
     let fallbackIntervalId: number | null = null;
     let reconnectTimeoutId: number | null = null;
-    let previousRunningCount = 0;
+    let streamRefreshTimeoutId: number | null = null;
 
     const refreshSilently = (options?: { includeActivity?: boolean }) => {
       const includeActivity = options?.includeActivity ?? true;
@@ -387,73 +386,77 @@ function SnapshotsPageContent() {
       fallbackIntervalId = null;
     };
 
-    const connectWebSocket = () => {
+    const scheduleStreamRefresh = () => {
+      if (streamRefreshTimeoutId !== null) return;
+      streamRefreshTimeoutId = window.setTimeout(() => {
+        streamRefreshTimeoutId = null;
+        refreshSilently();
+      }, 1_000);
+    };
+
+    const connectEventSource = () => {
       if (isDisposed) return;
 
-      const wsUrl = buildSnapshotStreamWebSocketUrl(
-        selectedRepositoryId,
-        process.env.NEXT_PUBLIC_SERVER_URL,
-      );
-      if (!wsUrl) {
+      const sseUrl = buildSnapshotStreamSseUrl(selectedRepositoryId, apiBaseUrl);
+      if (!sseUrl) {
         ensureFallbackPolling();
         return;
       }
 
       try {
-        websocket = new WebSocket(wsUrl);
+        eventSource = new EventSource(sseUrl, { withCredentials: true });
       } catch {
         ensureFallbackPolling();
-        reconnectTimeoutId = window.setTimeout(connectWebSocket, 5_000);
+        reconnectTimeoutId = window.setTimeout(connectEventSource, 5_000);
         return;
       }
 
-      websocket.onopen = () => {
-        clearFallbackPolling();
-        refreshSilently({ includeActivity: false });
+      const onStreamEvent = () => {
+        scheduleStreamRefresh();
       };
-      websocket.onmessage = (event) => {
-        try {
-          const data = JSON.parse(String((event as MessageEvent).data ?? "")) as SnapshotWsMessage;
-          if (Array.isArray(data.activities)) {
-            const nextRunningCount = data.activities.filter(
-              (activity) => activity.kind === "running",
-            ).length;
-            setSnapshotActivity(data.activities);
-            if (previousRunningCount > 0 && nextRunningCount === 0) {
-              // A run likely finished; refresh snapshots/attribution once.
-              refreshSilently({ includeActivity: false });
-            }
-            previousRunningCount = nextRunningCount;
-            return;
-          }
-        } catch {
-          // Fall back to silent refresh if payload is malformed.
+
+      eventSource.onopen = () => {
+        if (reconnectTimeoutId !== null) {
+          window.clearTimeout(reconnectTimeoutId);
+          reconnectTimeoutId = null;
         }
-        refreshSilently();
+        clearFallbackPolling();
+        scheduleStreamRefresh();
       };
-      websocket.onerror = () => {
-        ensureFallbackPolling();
-      };
-      websocket.onclose = () => {
-        websocket = null;
+      eventSource.onmessage = onStreamEvent;
+      eventSource.addEventListener("ready", onStreamEvent);
+      eventSource.addEventListener("tick", onStreamEvent);
+      eventSource.onerror = () => {
         if (isDisposed) return;
         ensureFallbackPolling();
-        reconnectTimeoutId = window.setTimeout(connectWebSocket, 5_000);
+        if (reconnectTimeoutId !== null) return;
+        reconnectTimeoutId = window.setTimeout(() => {
+          reconnectTimeoutId = null;
+          if (isDisposed) return;
+          if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+          }
+          connectEventSource();
+        }, 10_000);
       };
     };
 
-    connectWebSocket();
+    connectEventSource();
 
     const onVisibilityChange = () => refreshSilently();
     document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
       isDisposed = true;
-      if (websocket) {
-        websocket.close();
+      if (eventSource) {
+        eventSource.close();
       }
       if (reconnectTimeoutId !== null) {
         window.clearTimeout(reconnectTimeoutId);
+      }
+      if (streamRefreshTimeoutId !== null) {
+        window.clearTimeout(streamRefreshTimeoutId);
       }
       if (fallbackIntervalId !== null) {
         window.clearInterval(fallbackIntervalId);
@@ -831,7 +834,7 @@ function SnapshotsPageContent() {
 
     setIsRunningRepositoryCheck(true);
     try {
-      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/check`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/check`, {
         method: "POST",
         body: JSON.stringify({
           workerId: selectedSnapshotWorkerId || undefined,
@@ -855,7 +858,7 @@ function SnapshotsPageContent() {
 
     setIsRunningRepositoryRepairIndex(true);
     try {
-      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/repair-index`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/repair-index`, {
         method: "POST",
         body: JSON.stringify({
           workerId: selectedSnapshotWorkerId || undefined,
@@ -886,7 +889,7 @@ function SnapshotsPageContent() {
     try {
       const result = await apiFetchJson<{
         summary: { added: number; removed: number; changed: number };
-      }>(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/snapshot/diff`, {
+      }>(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/snapshot/diff`, {
         method: "POST",
         body: JSON.stringify({
           fromSnapshot: previousSnapshot.id,
@@ -916,7 +919,7 @@ function SnapshotsPageContent() {
 
     setIsRestoringSnapshot(true);
     try {
-      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/restore`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/restore`, {
         method: "POST",
         body: JSON.stringify({
           snapshot: selectedSnapshot.id,
@@ -938,7 +941,7 @@ function SnapshotsPageContent() {
       if (!selectedRepositoryId) return [];
       try {
         const data = await apiFetchJson<{ dirs?: string[] }>(
-          `${API_BASE}/rustic/repositories/${selectedRepositoryId}/ls-dirs`,
+          `${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/ls-dirs`,
           {
             method: "POST",
             body: JSON.stringify({
@@ -982,7 +985,7 @@ function SnapshotsPageContent() {
 
     setIsTriggeringBackup(true);
     try {
-      await apiFetchJson(`${API_BASE}/rustic/repositories/${selectedRepositoryId}/backup`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/backup`, {
         method: "POST",
         body: JSON.stringify({
           workerId: manualWorkerId,
@@ -1386,7 +1389,7 @@ function SnapshotsPageContent() {
                 if (!selectedRepositoryId) return;
                 try {
                   await apiFetchJson(
-                    `${API_BASE}/rustic/repositories/${selectedRepositoryId}/forget-snapshot`,
+                    `${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryId}/forget-snapshot`,
                     {
                       method: "POST",
                       body: JSON.stringify({

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import {
   RiAlarmWarningLine,
   RiArchiveLine,
@@ -172,28 +173,28 @@ export default function DashboardPage() {
 
       const [workersData, reposData, trafficData, storageData, dedupData, anomalyData] =
         await Promise.all([
-          apiFetchJson<{ workers?: WorkerRecord[] }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`, {
+          apiFetchJson<{ workers?: WorkerRecord[] }>(`${apiBaseUrl}/api/workers`, {
             method: "GET",
             retries: 1,
           }),
           apiFetchJson<{ repositories?: RepositoryRecord[] }>(
-            `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+            `${apiBaseUrl}/api/rustic/repositories`,
             { method: "GET", retries: 1 },
           ),
           apiFetchJson<{ buckets?: SnapshotActivityBucket[]; runs?: SnapshotRun[] }>(
-            `${process.env.NEXT_PUBLIC_SERVER_URL}/api/stats/snapshot-activity?hours=${hours}&buckets=${buckets}`,
+            `${apiBaseUrl}/api/stats/snapshot-activity?hours=${hours}&buckets=${buckets}`,
             { method: "GET", retries: 1 },
           ),
           apiFetchJson<{ buckets?: StorageUsageBucket[] }>(
-            `${process.env.NEXT_PUBLIC_SERVER_URL}/api/stats/storage-usage?hours=${hours}&intervalMinutes=5`,
+            `${apiBaseUrl}/api/stats/storage-usage?hours=${hours}&intervalMinutes=5`,
             { method: "GET", retries: 1 },
           ),
           apiFetchJson<{ rows?: DedupRow[] }>(
-            `${process.env.NEXT_PUBLIC_SERVER_URL}/api/stats/dedup?hours=${hours}&groupBy=repository`,
+            `${apiBaseUrl}/api/stats/dedup?hours=${hours}&groupBy=repository`,
             { method: "GET", retries: 1 },
           ),
           apiFetchJson<{ rows?: AnomalyRow[] }>(
-            `${process.env.NEXT_PUBLIC_SERVER_URL}/api/stats/anomalies?hours=${hours}&status=open`,
+            `${apiBaseUrl}/api/stats/anomalies?hours=${hours}&status=open`,
             { method: "GET", retries: 1 },
           ),
         ]);

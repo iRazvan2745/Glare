@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import {
   RiArrowDownSLine,
   RiCheckboxCircleLine,
@@ -806,7 +807,7 @@ function RepositoryListItem({
   onEdit: () => void;
   onDelete: () => void;
   isInitializing: boolean;
-  storageBytes: number | null;
+  storageBytes: number | null | undefined;
 }) {
   const BackendIcon =
     BACKEND_OPTIONS.find((b) => b.value === repo.backend)?.icon ?? RiDatabase2Line;
@@ -880,10 +881,12 @@ function RepositoryListItem({
                   Initializing
                 </span>
               ) : repo.isInitialized ? (
-                storageBytes != null ? (
-                  formatBytes(storageBytes)
-                ) : (
+                storageBytes === undefined ? (
+                  "—"
+                ) : storageBytes === null ? (
                   <Spinner />
+                ) : (
+                  formatBytes(storageBytes)
                 )
               ) : (
                 "Init"
@@ -950,28 +953,44 @@ export default function RepositoriesPage() {
   }, [repositories]);
 
   // Fetch storage sizes for initialized repos
-  const storageSizeQueries = useQueries({
-    queries: repositories
-      .filter((r) => r.isInitialized && r.options["s3.bucket"])
-      .map((r) => {
-        const remote = `glare-${r.id.split("-")[0]}:${r.options["s3.bucket"]}`;
-        return {
-          queryKey: ["repo-storage", r.id],
-          queryFn: () =>
-            apiFetchJson<{ rclone?: { parsedJson?: { bytes?: number } | null } }>(
-              `/api/rustic/repository-size?remote=${encodeURIComponent(remote)}`,
-            ).then((data) => data?.rclone?.parsedJson?.bytes ?? null),
-          staleTime: 5 * 60 * 1000,
-        };
-      }),
-  });
+  const repositoriesWithTrackedStorage = useMemo(
+    () => repositories.filter((r) => r.isInitialized && r.backend === "s3" && r.options["s3.bucket"]),
+    [repositories],
+  );
 
-  const storageBytesById = useMemo(() => {
-    const initialized = repositories.filter((r) => r.isInitialized && r.options["s3.bucket"]);
-    return Object.fromEntries(
-      initialized.map((r, i) => [r.id, storageSizeQueries[i]?.data ?? null]),
-    );
-  }, [repositories, storageSizeQueries]);
+  const storageBytesById = useQueries({
+    queries: repositoriesWithTrackedStorage.map((r) => {
+      const remote = `glare-${r.id.replace(/-/g, "")}:${r.options["s3.bucket"]}`;
+      return {
+        queryKey: ["repo-storage", r.id],
+        queryFn: () =>
+          apiFetchJson<{ rclone?: { parsedJson?: { bytes?: number } | null } }>(
+            `${apiBaseUrl}/api/rustic/repository-size?remote=${encodeURIComponent(remote)}`,
+          ).then((data) => ({ bytes: data?.rclone?.parsedJson?.bytes })),
+        staleTime: 5 * 60 * 1000,
+      };
+    }),
+    combine: (results) => {
+      const byRepoId: Record<string, number | null | undefined> = {};
+      for (const repo of repositoriesWithTrackedStorage) {
+        byRepoId[repo.id] = null;
+      }
+      for (const [index, result] of results.entries()) {
+        const repo = repositoriesWithTrackedStorage[index];
+        if (!repo) continue;
+        if (result.isError) {
+          byRepoId[repo.id] = undefined;
+          continue;
+        }
+        if (result.isPending || result.isLoading) {
+          byRepoId[repo.id] = null;
+          continue;
+        }
+        byRepoId[repo.id] = typeof result.data?.bytes === "number" ? result.data.bytes : undefined;
+      }
+      return byRepoId;
+    },
+  });
 
   // Data loading
   const loadData = useCallback(async () => {
@@ -985,13 +1004,13 @@ export default function RepositoriesPage() {
     try {
       const [repoData, workerData] = await Promise.all([
         apiFetchJson<{ repositories?: RepositoryRecord[] }>(
-          `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+          `${apiBaseUrl}/api/rustic/repositories`,
           {
             method: "GET",
             retries: 1,
           },
         ),
-        apiFetchJson<{ workers?: WorkerRecord[] }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`, {
+        apiFetchJson<{ workers?: WorkerRecord[] }>(`${apiBaseUrl}/api/workers`, {
           method: "GET",
           retries: 1,
         }),
@@ -1019,7 +1038,7 @@ export default function RepositoriesPage() {
     setIsSaving(true);
     try {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+        `${apiBaseUrl}/api/rustic/repositories`,
         {
           method: "POST",
           body: JSON.stringify(buildRequestBody(createForm)),
@@ -1056,7 +1075,7 @@ export default function RepositoriesPage() {
       const body = buildRequestBody(editForm);
       // For edit, send workerId as null to unlink, and skip password if empty
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${editingId}`,
+        `${apiBaseUrl}/api/rustic/repositories/${editingId}`,
         {
           method: "PATCH",
           body: JSON.stringify({
@@ -1087,7 +1106,7 @@ export default function RepositoriesPage() {
     if (!deletingId) return;
     setIsSaving(true);
     try {
-      await apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${deletingId}`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${deletingId}`, {
         method: "DELETE",
         retries: 1,
       });
@@ -1113,7 +1132,7 @@ export default function RepositoriesPage() {
 
     setInitializingId(repo.id);
     try {
-      await apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repo.id}/init`, {
+      await apiFetchJson(`${apiBaseUrl}/api/rustic/repositories/${repo.id}/init`, {
         method: "POST",
         retries: 1,
       });
@@ -1232,7 +1251,7 @@ export default function RepositoriesPage() {
                 onEdit={() => beginEdit(repo)}
                 onDelete={() => setDeletingId(repo.id)}
                 isInitializing={initializingId === repo.id}
-                storageBytes={storageBytesById[repo.id] ?? null}
+                storageBytes={storageBytesById[repo.id]}
               />
             ))}
         </CardContent>

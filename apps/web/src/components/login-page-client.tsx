@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import { useEffect, useState } from "react";
 
 import SignInForm from "@/components/sign-in-form";
@@ -10,7 +11,7 @@ export default function LoginPageClient() {
   const [signupsEnabled, setSignupsEnabled] = useState(true);
 
   useEffect(() => {
-    const base = (process.env.NEXT_PUBLIC_SERVER_URL ?? "").replace(/\/+$/, "");
+    const base = (apiBaseUrl ?? "").replace(/\/+$/, "");
     fetch(`${base}/api/public/signup-status`, { credentials: "include" })
       .then((res) => res.json())
       .then((data: unknown) => {

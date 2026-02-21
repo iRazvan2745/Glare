@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import { RiRefreshLine } from "@remixicon/react";
 import { useCallback, useEffect, useState } from "react";
 import { toast } from "@/lib/toast";
@@ -74,7 +75,7 @@ export default function AdminAuditPage() {
       if (resourceFilter !== "all") params.set("resourceType", resourceFilter);
 
       const data = await apiFetchJson<{ logs?: AuditLogEntry[] }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/audit/logs?${params.toString()}`,
+        `${apiBaseUrl}/api/audit/logs?${params.toString()}`,
         { method: "GET", retries: 1 },
       );
       const entries = data.logs ?? [];

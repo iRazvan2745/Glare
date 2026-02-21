@@ -18,17 +18,14 @@ bun install
 
 ## Configure Environment
 
-### Server (`apps/server/.env`)
+### Web/API (`apps/web/.env.local`)
 
 Required:
 
 - `DATABASE_URL`
 - `BETTER_AUTH_SECRET`
-- `CORS_ORIGIN`
-
-### Web (`apps/web/.env.local`)
-
-- `NEXT_PUBLIC_SERVER_URL=http://localhost:3000`
+- `NEXT_APP_URL=http://localhost:3002`
+- `APP_URL=http://localhost:3002`
 
 ## Initialize Database
 
@@ -46,7 +43,7 @@ bun run dev
 
 ```bash
 worker \
-  --master-api-endpoint http://localhost:3000 \
+  --master-api-endpoint http://localhost:3002 \
   --local-api-endpoint http://127.0.0.1:3001 \
   --api-token <worker-sync-token>
 ```
@@ -55,6 +52,6 @@ Get the sync token when creating the worker in UI/API.
 
 ## Local Ports
 
-- Server API: `3000`
+- Web + API: `3002`
+- Jobs service: no public HTTP port
 - Worker API: `3001` (example)
-- Web app: `3002`

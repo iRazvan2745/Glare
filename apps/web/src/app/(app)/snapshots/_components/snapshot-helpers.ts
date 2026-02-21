@@ -103,13 +103,6 @@ export type SnapshotActivity = {
   message: string;
 };
 
-export type SnapshotWsMessage = {
-  event?: "ready" | "tick";
-  ts?: number;
-  repositoryId?: string;
-  activities?: SnapshotActivity[];
-};
-
 export type FileEntry = {
   name: string;
   path: string;
@@ -496,24 +489,18 @@ export function sanitizeWorkerErrorMessage(message: string) {
   return message.replace(/\u001b\[[0-9;]*[a-zA-Z]/g, "").trim();
 }
 
-export function buildSnapshotStreamWebSocketUrl(repositoryId: string, serverUrl?: string) {
+export function buildSnapshotStreamSseUrl(repositoryId: string, serverUrl?: string) {
   if (!repositoryId) return null;
 
   const rawBase =
     serverUrl?.replace(/\/+$/, "") ?? (typeof window !== "undefined" ? window.location.origin : "");
   if (!rawBase) return null;
 
-  const wsBase = rawBase.startsWith("https://")
-    ? `wss://${rawBase.slice("https://".length)}`
-    : rawBase.startsWith("http://")
-      ? `ws://${rawBase.slice("http://".length)}`
-      : rawBase;
-
-  if (!wsBase.startsWith("ws://") && !wsBase.startsWith("wss://")) {
+  if (!rawBase.startsWith("http://") && !rawBase.startsWith("https://")) {
     return null;
   }
 
-  return `${wsBase}/api/rustic/repositories/${repositoryId}/snapshot-ws`;
+  return `${rawBase}/api/rustic/repositories/${repositoryId}/snapshot-stream`;
 }
 
 export function monthKey(date: Date) {

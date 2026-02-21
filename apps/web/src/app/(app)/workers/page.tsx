@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import {
   RiAddLine,
   RiFileCopyLine,
@@ -290,13 +291,10 @@ function WorkersPageContent() {
       }
 
       try {
-        const data = await apiFetchJson<{ workers?: WorkerRecord[] }>(
-          `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
-          {
-            method: "GET",
-            retries: 1,
-          },
-        );
+        const data = await apiFetchJson<{ workers?: WorkerRecord[] }>(`${apiBaseUrl}/api/workers`, {
+          method: "GET",
+          retries: 1,
+        });
         const nextWorkers = data.workers ?? [];
         setWorkers(nextWorkers);
 
@@ -307,7 +305,7 @@ function WorkersPageContent() {
             nextWorkers.map(async (worker) => {
               try {
                 const eventsData = await apiFetchJson<{ events?: SyncEventRecord[] }>(
-                  `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${worker.id}/sync-events?hours=24&limit=24`,
+                  `${apiBaseUrl}/api/workers/${worker.id}/sync-events?hours=24&limit=24`,
                   {
                     method: "GET",
                     retries: 1,
@@ -350,7 +348,7 @@ function WorkersPageContent() {
 
       try {
         const data = await apiFetchJson<{ repositories?: RepositoryRecord[] }>(
-          `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+          `${apiBaseUrl}/api/rustic/repositories`,
           {
             method: "GET",
             retries: 1,
@@ -513,7 +511,7 @@ function WorkersPageContent() {
 
     try {
       const data = await apiFetchJson<{ worker?: WorkerRecord; syncToken?: string }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers`,
+        `${apiBaseUrl}/api/workers`,
         {
           method: "POST",
           body: JSON.stringify({ name: normalizedName }),
@@ -551,7 +549,7 @@ function WorkersPageContent() {
     setIsUpdatingWorker(true);
     try {
       const data = await apiFetchJson<{ worker?: WorkerRecord }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${editingWorkerId}`,
+        `${apiBaseUrl}/api/workers/${editingWorkerId}`,
         {
           method: "PATCH",
           body: JSON.stringify({ name: normalizedName }),
@@ -581,7 +579,7 @@ function WorkersPageContent() {
 
     setIsDeletingWorker(true);
     try {
-      await apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/workers/${deletingWorkerId}`, {
+      await apiFetchJson(`${apiBaseUrl}/api/workers/${deletingWorkerId}`, {
         method: "DELETE",
         retries: 1,
       });
@@ -613,7 +611,7 @@ function WorkersPageContent() {
     setIsSavingRepoSetup(true);
     try {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${selectedRepositoryIdToAttach}`,
+        `${apiBaseUrl}/api/rustic/repositories/${selectedRepositoryIdToAttach}`,
         {
           method: "PATCH",
           body: JSON.stringify({ workerId: activeWorker.id }),
@@ -640,7 +638,7 @@ function WorkersPageContent() {
     setIsSavingRepoSetup(true);
     try {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories/${repositoryId}`,
+        `${apiBaseUrl}/api/rustic/repositories/${repositoryId}`,
         {
           method: "PATCH",
           body: JSON.stringify({ workerId: null }),
@@ -689,7 +687,7 @@ function WorkersPageContent() {
     setIsSavingRepoSetup(true);
     try {
       const data = await apiFetchJson<{ repository?: RepositoryRecord }>(
-        `${process.env.NEXT_PUBLIC_SERVER_URL}/api/rustic/repositories`,
+        `${apiBaseUrl}/api/rustic/repositories`,
         {
           method: "POST",
           body: JSON.stringify({
@@ -738,7 +736,7 @@ function WorkersPageContent() {
   }
 
   const latestWorkerRunCommand = latestSyncToken
-    ? `cargo run --manifest-path apps/worker/Cargo.toml -- --master-api-endpoint ${process.env.NEXT_PUBLIC_SERVER_URL} --local-api-endpoint http://127.0.0.1:4001 --api-token '${latestSyncToken}'`
+    ? `cargo run --manifest-path apps/worker/Cargo.toml -- --master-api-endpoint ${apiBaseUrl} --local-api-endpoint http://127.0.0.1:4001 --api-token '${latestSyncToken}'`
     : "";
   const quickS3Preview = useMemo(() => buildS3PathPreview(quickS3), [quickS3]);
   const onlineCount = workers.filter((worker) => worker.isOnline).length;

@@ -1,5 +1,6 @@
 "use client";
 
+import { apiBaseUrl } from "@/lib/api-base-url";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "@/lib/toast";
 
@@ -50,7 +51,7 @@ export default function SettingsNotificationsPage() {
     queryKey: ["settings", session?.user?.id ?? "anonymous"],
     enabled: Boolean(session?.user),
     queryFn: () =>
-      apiFetchJson<{ settings?: SettingsPayload }>(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
+      apiFetchJson<{ settings?: SettingsPayload }>(`${apiBaseUrl}/api/settings`, {
         method: "GET",
         retries: 1,
       }),
@@ -58,7 +59,7 @@ export default function SettingsNotificationsPage() {
 
   const saveSettingsMutation = useMutation({
     mutationFn: (payload: SettingsPayload) =>
-      apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/settings`, {
+      apiFetchJson(`${apiBaseUrl}/api/settings`, {
         method: "POST",
         body: JSON.stringify(payload),
         retries: 1,
@@ -76,7 +77,7 @@ export default function SettingsNotificationsPage() {
 
   const testDiscordMutation = useMutation({
     mutationFn: () =>
-      apiFetchJson(`${process.env.NEXT_PUBLIC_SERVER_URL}/api/settings/discord/test`, {
+      apiFetchJson(`${apiBaseUrl}/api/settings/discord/test`, {
         method: "POST",
         retries: 0,
       }),
