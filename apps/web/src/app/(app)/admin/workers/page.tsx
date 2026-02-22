@@ -42,6 +42,7 @@ type WorkerRecord = {
   id: string;
   name: string;
   region: string | null;
+  ipAddress: string | null;
   status: string;
   isOnline: boolean;
   lastSeenAt: string | null;
@@ -75,6 +76,7 @@ export default function AdminWorkersPage() {
 
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [createName, setCreateName] = useState("");
+  const [createWorkerIp, setCreateWorkerIp] = useState("");
   const [createRegion, setCreateRegion] = useState("");
 
   const [editingId, setEditingId] = useState("");
@@ -108,6 +110,7 @@ export default function AdminWorkersPage() {
 
   async function createWorker() {
     if (!createName.trim()) return toast.error("Name is required");
+    if (!createWorkerIp.trim()) return toast.error("Worker IP is required");
     setIsSaving(true);
     try {
       const data = await apiFetchJson<{ worker?: WorkerRecord; syncToken?: string }>(
@@ -116,6 +119,7 @@ export default function AdminWorkersPage() {
           method: "POST",
           body: JSON.stringify({
             name: createName.trim(),
+            workerIp: createWorkerIp.trim(),
             ...(createRegion.trim() ? { region: createRegion.trim() } : {}),
           }),
           retries: 1,
@@ -124,6 +128,7 @@ export default function AdminWorkersPage() {
       if (data.worker) setWorkers((c) => [data.worker!, ...c]);
       setIsCreateOpen(false);
       setCreateName("");
+      setCreateWorkerIp("");
       setCreateRegion("");
       if (data.syncToken) setNewToken(data.syncToken);
       toast.success("Worker created.");
@@ -225,6 +230,16 @@ export default function AdminWorkersPage() {
                     onChange={(e) => setCreateName(e.target.value)}
                     disabled={isSaving}
                     placeholder="my-worker"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Worker IP</Label>
+                  <Input
+                    value={createWorkerIp}
+                    onChange={(e) => setCreateWorkerIp(e.target.value)}
+                    disabled={isSaving}
+                    placeholder="192.168.1.42"
+                    maxLength={45}
                   />
                 </div>
                 <div className="grid gap-2">

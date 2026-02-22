@@ -7,6 +7,7 @@ import { worker } from "@glare/db/schema/workers";
 import { and, count, desc, eq, gte, sql } from "drizzle-orm";
 import { type } from "arktype";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { isIP } from "node:net";
 import { Elysia } from "elysia";
 import { getAuthenticatedUser } from "../../shared/auth/session";
 import { logInfo, logWarn } from "../../shared/logger";
@@ -15,7 +16,7 @@ import { sendDiscordNotification } from "../../shared/notifications";
 import { recordStorageUsageSample } from "../../shared/storage-usage";
 
 const workerIdType = type("string.uuid");
-const createWorkerType = type({ name: "string", "region?": "string" });
+const createWorkerType = type({ name: "string", workerIp: "string", "region?": "string" });
 const updateWorkerType = type({ name: "string", "region?": "string | null" });
 const rotateTokenParamsType = type({ id: "string.uuid" });
 const workerParamsType = type({ id: "string.uuid" });
@@ -61,7 +62,11 @@ const createWorkerSchema = {
     if (region && region.length > 120) {
       return { success: false as const };
     }
-    return { success: true as const, data: { name, region } };
+    const workerIp = data.workerIp.trim();
+    if (!workerIp || isIP(workerIp) === 0) {
+      return { success: false as const };
+    }
+    return { success: true as const, data: { name, region, workerIp } };
   },
 };
 const updateWorkerSchema = {
@@ -299,6 +304,7 @@ function mapWorkerResponse(record: {
   id: string;
   name: string;
   region: string | null;
+  endpoint: string | null;
   status: string;
   lastSeenAt: Date | null;
   uptimeMs: number;
@@ -307,10 +313,19 @@ function mapWorkerResponse(record: {
   createdAt: Date;
   updatedAt: Date;
 }) {
+  const endpointUrl = (() => {
+    if (!record.endpoint) return null;
+    try {
+      return new URL(record.endpoint);
+    } catch {
+      return null;
+    }
+  })();
   return {
     id: record.id,
     name: record.name,
     region: record.region,
+    ipAddress: endpointUrl?.hostname ?? null,
     status: record.status,
     lastSeenAt: record.lastSeenAt,
     uptimeMs: record.uptimeMs,
@@ -566,6 +581,7 @@ export const workerRoutes = new Elysia()
         id: true,
         name: true,
         region: true,
+        endpoint: true,
         status: true,
         lastSeenAt: true,
         uptimeMs: true,
@@ -600,12 +616,14 @@ export const workerRoutes = new Elysia()
         userId: user.id,
         name: parsed.data.name,
         region: parsed.data.region,
+        endpoint: `http://${parsed.data.workerIp.includes(":") ? `[${parsed.data.workerIp}]` : parsed.data.workerIp}:4001`,
         syncTokenHash,
       })
       .returning({
         id: worker.id,
         name: worker.name,
         region: worker.region,
+        endpoint: worker.endpoint,
         status: worker.status,
         lastSeenAt: worker.lastSeenAt,
         uptimeMs: worker.uptimeMs,
@@ -666,6 +684,7 @@ export const workerRoutes = new Elysia()
         id: worker.id,
         name: worker.name,
         region: worker.region,
+        endpoint: worker.endpoint,
         status: worker.status,
         lastSeenAt: worker.lastSeenAt,
         uptimeMs: worker.uptimeMs,

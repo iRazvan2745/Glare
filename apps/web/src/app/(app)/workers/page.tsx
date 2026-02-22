@@ -54,6 +54,7 @@ type WorkerRecord = {
   id: string;
   name: string;
   region: string | null;
+  ipAddress: string | null;
   status: "online" | "degraded" | "offline" | string;
   lastSeenAt: string | null;
   uptimeMs: number;
@@ -262,6 +263,10 @@ function WorkersPageContent() {
   );
   const [workerNameDraft, setWorkerNameDraft] = useQueryState(
     "workerName",
+    parseAsString.withDefault("").withOptions({ history: "replace" }),
+  );
+  const [workerIpDraft, setWorkerIpDraft] = useQueryState(
+    "workerIp",
     parseAsString.withDefault("").withOptions({ history: "replace" }),
   );
   const [sortBy, setSortBy] = useState("name-asc");
@@ -501,9 +506,14 @@ function WorkersPageContent() {
 
   async function createWorker() {
     const normalizedName = workerNameDraft.trim();
+    const normalizedWorkerIp = workerIpDraft.trim();
 
     if (!normalizedName) {
       toast.error("Worker name cannot be empty.");
+      return;
+    }
+    if (!normalizedWorkerIp) {
+      toast.error("Worker IP cannot be empty.");
       return;
     }
 
@@ -514,7 +524,7 @@ function WorkersPageContent() {
         `${apiBaseUrl}/api/workers`,
         {
           method: "POST",
-          body: JSON.stringify({ name: normalizedName }),
+          body: JSON.stringify({ name: normalizedName, workerIp: normalizedWorkerIp }),
           retries: 1,
         },
       );
@@ -526,6 +536,7 @@ function WorkersPageContent() {
         setLatestSyncToken(data.syncToken);
       }
       await setWorkerNameDraft("");
+      await setWorkerIpDraft("");
       await setIsCreateDialogOpen(false);
       toast.success("Worker created.");
     } catch {
@@ -735,8 +746,10 @@ function WorkersPageContent() {
     }
   }
 
-  const latestWorkerRunCommand = latestSyncToken
-    ? `cargo run --manifest-path apps/worker/Cargo.toml -- --master-api-endpoint ${apiBaseUrl} --local-api-endpoint http://127.0.0.1:4001 --api-token '${latestSyncToken}'`
+  const workerInstallerScriptUrl =
+    "https://raw.githubusercontent.com/iRazvan2745/Glare/main/apps/worker/installer/install.sh";
+  const latestWorkerInstallCommand = latestSyncToken
+    ? `curl -fsSL ${workerInstallerScriptUrl} -o /tmp/worker-installer && chmod +x /tmp/worker-installer && sudo mv /tmp/worker-installer /usr/local/bin/worker-installer && worker-installer --master-api-endpoint ${apiBaseUrl} --local-api-endpoint http://127.0.0.1:4001 --api-token '${latestSyncToken}'`
     : "";
   const quickS3Preview = useMemo(() => buildS3PathPreview(quickS3), [quickS3]);
   const onlineCount = workers.filter((worker) => worker.isOnline).length;
@@ -768,11 +781,11 @@ function WorkersPageContent() {
                 <DialogHeader>
                   <DialogTitle>Create Worker</DialogTitle>
                   <DialogDescription>
-                    Give this worker a name. Your draft is kept in query params.
+                    Give this worker a name and IP. Draft values are kept in query params.
                   </DialogDescription>
                 </DialogHeader>
 
-                <div className="space-y-2">
+                <div className="space-y-4">
                   <label htmlFor="worker-name" className="text-sm font-medium">
                     Name
                   </label>
@@ -784,6 +797,17 @@ function WorkersPageContent() {
                     placeholder="Nightly report runner"
                     disabled={isCreatingWorker}
                     maxLength={120}
+                  />
+                  <label htmlFor="worker-ip" className="text-sm font-medium">
+                    Worker IP
+                  </label>
+                  <Input
+                    id="worker-ip"
+                    value={workerIpDraft}
+                    onChange={(event) => void setWorkerIpDraft(event.target.value)}
+                    placeholder="192.168.1.42"
+                    disabled={isCreatingWorker}
+                    maxLength={45}
                   />
                 </div>
 
@@ -836,18 +860,18 @@ function WorkersPageContent() {
                 </Button>
               </div>
               <p className="mt-3 text-xs font-medium text-emerald-700 dark:text-emerald-300">
-                Run command
+                Installer command
               </p>
               <div className="mt-2 flex items-center gap-2">
                 <code className="block w-full overflow-x-auto rounded bg-background p-2 text-xs">
-                  {latestWorkerRunCommand}
+                  {latestWorkerInstallCommand}
                 </code>
                 <Button
                   size="icon"
                   variant="outline"
                   onClick={() => {
-                    void navigator.clipboard.writeText(latestWorkerRunCommand);
-                    toast.success("Run command copied.");
+                    void navigator.clipboard.writeText(latestWorkerInstallCommand);
+                    toast.success("Installer command copied.");
                   }}
                 >
                   <RiTerminalBoxLine className="size-4" />
