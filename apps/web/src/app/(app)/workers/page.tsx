@@ -179,19 +179,7 @@ const s3Presets: S3Preset[] = [
       disableTls: false,
       noVerifySsl: false,
     },
-  },
-  {
-    id: "gov",
-    label: "AWS GovCloud",
-    description: "US GovCloud endpoint",
-    values: {
-      endpoint: "https://s3.us-gov-west-1.amazonaws.com",
-      region: "us-gov-west-1",
-      pathStyle: true,
-      disableTls: false,
-      noVerifySsl: false,
-    },
-  },
+  }
 ];
 
 function applyS3Preset(current: S3Draft, preset: S3Preset): S3Draft {
@@ -247,6 +235,7 @@ function WorkersPageContent() {
   const [isSavingRepoSetup, setIsSavingRepoSetup] = useState(false);
   const [latestSyncToken, setLatestSyncToken] = useState("");
   const [latestWorkerId, setLatestWorkerId] = useState("");
+  const [latestWorkerIp, setLatestWorkerIp] = useState("");
 
   const [activeRepositoryWorkerId, setActiveRepositoryWorkerId] = useState("");
   const [selectedRepositoryIdToAttach, setSelectedRepositoryIdToAttach] = useState("");
@@ -531,6 +520,7 @@ function WorkersPageContent() {
       if (data.worker) {
         setWorkers((previous) => [data.worker as WorkerRecord, ...previous]);
         setLatestWorkerId(data.worker.id);
+        setLatestWorkerIp(data.worker.ipAddress ?? "");
       }
       if (data.syncToken) {
         setLatestSyncToken(data.syncToken);
@@ -604,6 +594,7 @@ function WorkersPageContent() {
       if (latestWorkerId === deletingWorkerId) {
         setLatestWorkerId("");
         setLatestSyncToken("");
+        setLatestWorkerIp("");
       }
       await setDeletingWorkerId("");
       toast.success("Worker deleted.");
@@ -748,8 +739,12 @@ function WorkersPageContent() {
 
   const workerInstallerScriptUrl =
     "https://raw.githubusercontent.com/iRazvan2745/Glare/main/apps/worker/installer/install.sh";
+  const workerMasterApiEndpoint = apiBaseUrl || "http://127.0.0.1:3000";
+  const workerLocalApiEndpoint = latestWorkerIp
+    ? `http://${latestWorkerIp.includes(":") ? `[${latestWorkerIp}]` : latestWorkerIp}:4001`
+    : "http://127.0.0.1:4001";
   const latestWorkerInstallCommand = latestSyncToken
-    ? `curl -fsSL ${workerInstallerScriptUrl} -o /tmp/worker-installer && chmod +x /tmp/worker-installer && sudo mv /tmp/worker-installer /usr/local/bin/worker-installer && worker-installer --master-api-endpoint ${apiBaseUrl} --local-api-endpoint http://127.0.0.1:4001 --api-token '${latestSyncToken}'`
+    ? `curl -fsSL ${workerInstallerScriptUrl} -o /tmp/worker-installer && chmod +x /tmp/worker-installer && sudo mv /tmp/worker-installer /usr/local/bin/worker-installer && worker-installer --master-api-endpoint ${workerMasterApiEndpoint} --local-api-endpoint ${workerLocalApiEndpoint} --api-token '${latestSyncToken}'`
     : "";
   const quickS3Preview = useMemo(() => buildS3PathPreview(quickS3), [quickS3]);
   const onlineCount = workers.filter((worker) => worker.isOnline).length;
@@ -880,6 +875,11 @@ function WorkersPageContent() {
               {latestWorkerId ? (
                 <p className="mt-2 text-[11px] text-emerald-700 dark:text-emerald-300">
                   Worker ID: {latestWorkerId}
+                </p>
+              ) : null}
+              {latestWorkerIp ? (
+                <p className="mt-1 text-[11px] text-emerald-700 dark:text-emerald-300">
+                  Worker API: {workerLocalApiEndpoint}
                 </p>
               ) : null}
             </div>
