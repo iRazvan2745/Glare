@@ -5,11 +5,51 @@ import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { useRender } from "@base-ui/react/use-render";
 import { cva, type VariantProps } from "class-variance-authority";
 import { RiArrowDownSLine, RiExpandUpDownLine, RiArrowUpSLine } from "@remixicon/react";
-import type * as React from "react";
+import * as React from "react";
 
 import { cn } from "@/lib/utils";
 
-const Select = SelectPrimitive.Root;
+// Label registry context: maps item values to their display labels
+type LabelRegistryContextValue = {
+  labels: Map<unknown, React.ReactNode>;
+  version: number;
+};
+
+const LabelRegistryContext = React.createContext<LabelRegistryContextValue | null>(null);
+const LabelRegistryDispatchContext = React.createContext<React.Dispatch<
+  | { type: "register"; value: unknown; label: React.ReactNode }
+  | { type: "unregister"; value: unknown }
+> | null>(null);
+
+function labelRegistryReducer(
+  state: LabelRegistryContextValue,
+  action: { type: "register"; value: unknown; label: React.ReactNode } | { type: "unregister"; value: unknown },
+): LabelRegistryContextValue {
+  const next = new Map(state.labels);
+  if (action.type === "register") {
+    next.set(action.value, action.label);
+  } else {
+    next.delete(action.value);
+  }
+  return { labels: next, version: state.version + 1 };
+}
+
+function Select<Value, Multiple extends boolean | undefined = false>(
+  props: SelectPrimitive.Root.Props<Value, Multiple>,
+) {
+  const [registry, dispatch] = React.useReducer(labelRegistryReducer, {
+    labels: new Map(),
+    version: 0,
+  });
+
+  return (
+    <LabelRegistryContext.Provider value={registry}>
+      <LabelRegistryDispatchContext.Provider value={dispatch}>
+        <SelectPrimitive.Root {...props} />
+      </LabelRegistryDispatchContext.Provider>
+    </LabelRegistryContext.Provider>
+  );
+}
 
 const selectTriggerVariants = cva(
   "relative inline-flex min-h-9 w-full min-w-36 select-none items-center justify-between gap-2 rounded-lg border border-input bg-background not-dark:bg-clip-padding px-[calc(--spacing(3)-1px)] text-left text-base text-foreground shadow-xs/5 outline-none ring-ring/24 transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] not-data-disabled:not-focus-visible:not-aria-invalid:not-data-pressed:before:shadow-[0_1px_--theme(--color-black/4%)] pointer-coarse:after:absolute pointer-coarse:after:size-full pointer-coarse:after:min-h-11 focus-visible:border-ring focus-visible:ring-[3px] aria-invalid:border-destructive/36 focus-visible:aria-invalid:border-destructive/64 focus-visible:aria-invalid:ring-destructive/16 data-disabled:pointer-events-none data-disabled:opacity-64 sm:min-h-8 sm:text-sm dark:bg-input/32 dark:aria-invalid:ring-destructive/24 dark:not-data-disabled:not-focus-visible:not-aria-invalid:not-data-pressed:before:shadow-[0_-1px_--theme(--color-white/6%)] [&_svg:not([class*='opacity-'])]:opacity-80 [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 [[data-disabled],:focus-visible,[aria-invalid],[data-pressed]]:shadow-none",
@@ -79,14 +119,47 @@ function SelectTrigger({
   );
 }
 
-function SelectValue({ className, ...props }: SelectPrimitive.Value.Props) {
+function SelectValue({
+  className,
+  children: childrenProp,
+  ...props
+}: SelectPrimitive.Value.Props) {
+  const registry = React.useContext(LabelRegistryContext);
+
+  // Wrap the children prop to resolve labels from registry
+  const children =
+    childrenProp ??
+    ((value: unknown) => {
+      if (value == null) return null;
+      const label = registry?.labels.get(value);
+      return label !== undefined ? label : String(value);
+    });
+
   return (
     <SelectPrimitive.Value
       className={cn("flex-1 truncate data-placeholder:text-muted-foreground", className)}
       data-slot="select-value"
       {...props}
-    />
+    >
+      {children}
+    </SelectPrimitive.Value>
   );
+}
+
+function collectItemLabels(
+  children: React.ReactNode,
+  dispatch: React.Dispatch<{ type: "register"; value: unknown; label: React.ReactNode }>,
+) {
+  React.Children.forEach(children, (child) => {
+    if (!React.isValidElement(child)) return;
+    const props = child.props as Record<string, unknown>;
+    if (props.value !== undefined && props.children !== undefined) {
+      dispatch({ type: "register", value: props.value, label: props.children as React.ReactNode });
+    }
+    if (props.children && typeof props.children !== "function") {
+      collectItemLabels(props.children as React.ReactNode, dispatch);
+    }
+  });
 }
 
 function SelectPopup({
@@ -107,6 +180,14 @@ function SelectPopup({
   alignItemWithTrigger?: SelectPrimitive.Positioner.Props["alignItemWithTrigger"];
   anchor?: SelectPrimitive.Positioner.Props["anchor"];
 }) {
+  // Pre-register labels from children so SelectValue can resolve them
+  // before the popup is ever opened (items mount inside a Portal).
+  const dispatch = React.useContext(LabelRegistryDispatchContext);
+  React.useEffect(() => {
+    if (!dispatch) return;
+    collectItemLabels(children, dispatch);
+  }, [children, dispatch]);
+
   return (
     <SelectPrimitive.Portal>
       <SelectPrimitive.Positioner
@@ -151,6 +232,16 @@ function SelectPopup({
 }
 
 function SelectItem({ className, children, ...props }: SelectPrimitive.Item.Props) {
+  const dispatch = React.useContext(LabelRegistryDispatchContext);
+
+  // Register the label when the item mounts (popup opens).
+  // Don't unregister on unmount so the label persists when the popup closes.
+  React.useEffect(() => {
+    if (dispatch && props.value !== undefined) {
+      dispatch({ type: "register", value: props.value, label: children });
+    }
+  }, [dispatch, props.value, children]);
+
   return (
     <SelectPrimitive.Item
       className={cn(

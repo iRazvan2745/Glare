@@ -193,5 +193,5 @@ export const settingsRoutes = new Elysia()
       return status(502, { error: "Failed to deliver Discord test notification" });
     }
 
-    return status(204);
+    return new Response(null, { status: 204 });
   });

@@ -182,6 +182,35 @@ ensure_rustic() {
   exit 1
 }
 
+install_worker_from_source() {
+  echo "Falling back to source build from ${GITHUB_REPO}..."
+  ensure_cmd git git || {
+    echo "Failed to install git." >&2
+    exit 1
+  }
+  ensure_cmd cargo cargo || {
+    echo "Failed to install cargo/rust toolchain." >&2
+    exit 1
+  }
+
+  local src_tmp
+  src_tmp="$(mktemp -d)"
+
+  git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" "${src_tmp}/repo"
+  cargo build --manifest-path "${src_tmp}/repo/apps/worker/Cargo.toml" --release
+
+  local built_bin
+  built_bin="${src_tmp}/repo/apps/worker/target/release/worker"
+  if [[ ! -x "${built_bin}" ]]; then
+    echo "Source build finished but worker binary was not found." >&2
+    exit 1
+  fi
+
+  echo "Installing binary from source build..."
+  ${SUDO} install -Dm755 "${built_bin}" "${INSTALL_BIN_PATH}"
+  rm -rf "${src_tmp}"
+}
+
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
 case "${arch}" in
@@ -197,78 +226,97 @@ else
 fi
 
 echo "Fetching release metadata from ${GITHUB_REPO} (${RELEASE_TAG})..."
-release_json="$(curl -fsSL "${api_url}")"
+release_json=""
+if ! release_json="$(curl -fsSL "${api_url}" 2>/dev/null)"; then
+  if [[ "${RELEASE_TAG}" == "latest" ]]; then
+    echo "No stable 'latest' release found. Trying newest available release (including pre-releases)..."
+    if ! release_json="$(curl -fsSL "https://api.github.com/repos/${GITHUB_REPO}/releases" 2>/dev/null)"; then
+      echo "No GitHub release metadata found (or release endpoint unavailable)."
+      install_worker_from_source
+    fi
+  else
+    echo "No GitHub release metadata found for tag '${RELEASE_TAG}'."
+    install_worker_from_source
+  fi
+fi
 
-asset_urls="$(printf '%s\n' "${release_json}" | sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]\+\)".*/\1/p')"
+if [[ -n "${release_json}" ]]; then
+  asset_urls="$(printf '%s\n' "${release_json}" | sed -n 's/.*"browser_download_url":[[:space:]]*"\([^"]\+\)".*/\1/p')"
+else
+  asset_urls=""
+fi
 
 if [[ -z "${asset_urls}" ]]; then
-  echo "No release assets found." >&2
-  exit 1
+  if [[ -n "${release_json}" ]]; then
+    echo "No release assets found. Falling back to source build."
+    install_worker_from_source
+  fi
 fi
 
-select_asset_url() {
-  local pattern="$1"
-  printf '%s\n' "${asset_urls}" | awk -v p="${pattern}" '
-    {
-      n=$0
-      sub(/^.*\//, "", n)
-      if (n ~ p) {
-        print $0
-        exit
+if [[ -n "${asset_urls}" ]]; then
+  select_asset_url() {
+    local pattern="$1"
+    printf '%s\n' "${asset_urls}" | awk -v p="${pattern}" '
+      {
+        n=$0
+        sub(/^.*\//, "", n)
+        if (n ~ p) {
+          print $0
+          exit
+        }
       }
-    }
-  '
-}
+    '
+  }
 
-if [[ -n "${ASSET_NAME}" ]]; then
-  asset_url="$(printf '%s\n' "${asset_urls}" | awk -v n="${ASSET_NAME}" '
-    {
-      f=$0
-      sub(/^.*\//, "", f)
-      if (f == n) {
-        print $0
-        exit
+  if [[ -n "${ASSET_NAME}" ]]; then
+    asset_url="$(printf '%s\n' "${asset_urls}" | awk -v n="${ASSET_NAME}" '
+      {
+        f=$0
+        sub(/^.*\//, "", f)
+        if (f == n) {
+          print $0
+          exit
+        }
       }
-    }
-  ')"
-else
-  asset_url="$(select_asset_url "^${BIN_NAME}[-_.]?${os}[-_.]?${arch}(\\.|$)")"
-  [[ -n "${asset_url}" ]] || asset_url="$(select_asset_url "^worker[-_.]?${os}[-_.]?${arch}(\\.|$)")"
-  [[ -n "${asset_url}" ]] || asset_url="$(printf '%s\n' "${asset_urls}" | awk -v os="${os}" -v arch="${arch}" '
-    {
-      n=$0
-      sub(/^.*\//, "", n)
-      if (n ~ os && n ~ arch && n !~ /sha256|checksums|sig/) {
-        print $0
-        exit
+    ')"
+  else
+    asset_url="$(select_asset_url "^${BIN_NAME}[-_.]?${os}[-_.]?${arch}(\\.|$)")"
+    [[ -n "${asset_url}" ]] || asset_url="$(select_asset_url "^worker[-_.]?${os}[-_.]?${arch}(\\.|$)")"
+    [[ -n "${asset_url}" ]] || asset_url="$(printf '%s\n' "${asset_urls}" | awk -v os="${os}" -v arch="${arch}" '
+      {
+        n=$0
+        sub(/^.*\//, "", n)
+        if (n ~ os && n ~ arch && n !~ /sha256|checksums|sig/) {
+          print $0
+          exit
+        }
       }
-    }
-  ')"
-  [[ -n "${asset_url}" ]] || asset_url="$(printf '%s\n' "${asset_urls}" | awk '
-    {
-      n=$0
-      sub(/^.*\//, "", n)
-      if (n !~ /sha256|checksums|sig/) {
-        print $0
-        exit
+    ')"
+    [[ -n "${asset_url}" ]] || asset_url="$(printf '%s\n' "${asset_urls}" | awk '
+      {
+        n=$0
+        sub(/^.*\//, "", n)
+        if (n !~ /sha256|checksums|sig/) {
+          print $0
+          exit
+        }
       }
-    }
-  ')"
-fi
+    ')"
+  fi
 
-if [[ -z "${asset_url}" ]]; then
-  echo "Could not find a matching release asset." >&2
-  echo "Available asset names:" >&2
-  printf '%s\n' "${asset_urls}" | sed 's#^.*/# - #' >&2
-  exit 1
-fi
+  if [[ -z "${asset_url}" ]]; then
+    echo "Could not find a matching release asset." >&2
+    echo "Available asset names:" >&2
+    printf '%s\n' "${asset_urls}" | sed 's#^.*/# - #' >&2
+    exit 1
+  fi
 
-tmp_dir="$(mktemp -d)"
-trap 'rm -rf "${tmp_dir}"' EXIT
+  tmp_dir="$(mktemp -d)"
+  trap 'rm -rf "${tmp_dir}"' EXIT
 
-asset_file="${tmp_dir}/asset"
-echo "Downloading release asset..."
-curl -fL "${asset_url}" -o "${asset_file}"
+  asset_file="${tmp_dir}/asset"
+  echo "Downloading release asset..."
+  curl -fL "${asset_url}" -o "${asset_file}"
 
 extract_or_copy_binary() {
   local src="$1"
@@ -296,12 +344,13 @@ extract_or_copy_binary() {
   cp "${candidate}" "${out}"
 }
 
-bin_tmp="${tmp_dir}/${BIN_NAME}"
-extract_or_copy_binary "${asset_file}" "${bin_tmp}"
-chmod +x "${bin_tmp}"
+  bin_tmp="${tmp_dir}/${BIN_NAME}"
+  extract_or_copy_binary "${asset_file}" "${bin_tmp}"
+  chmod +x "${bin_tmp}"
 
-echo "Installing binary..."
-${SUDO} install -Dm755 "${bin_tmp}" "${INSTALL_BIN_PATH}"
+  echo "Installing binary..."
+  ${SUDO} install -Dm755 "${bin_tmp}" "${INSTALL_BIN_PATH}"
+fi
 
 echo "Ensuring dependencies..."
 ensure_cmd rclone rclone || {

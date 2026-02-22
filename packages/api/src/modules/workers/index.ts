@@ -618,6 +618,7 @@ export const workerRoutes = new Elysia()
         region: parsed.data.region,
         endpoint: `http://${parsed.data.workerIp.includes(":") ? `[${parsed.data.workerIp}]` : parsed.data.workerIp}:4001`,
         syncTokenHash,
+        syncToken,
       })
       .returning({
         id: worker.id,
@@ -725,7 +726,7 @@ export const workerRoutes = new Elysia()
 
     await db.delete(worker).where(eq(worker.id, existingWorker.id));
 
-    return status(204);
+    return new Response(null, { status: 204 });
   })
   .get("/api/workers/:id/sync-events", async ({ request, params, query, status }) => {
     const user = await getAuthenticatedUser(request);
@@ -917,7 +918,7 @@ export const workerRoutes = new Elysia()
       }
     }
 
-    return status(204);
+    return new Response(null, { status: 204 });
   })
   .post("/api/workers/backup-plans/sync", async ({ request, status }) => {
     const auth = await authenticateWorkerFromSyncToken(request.headers);
@@ -1176,7 +1177,7 @@ export const workerRoutes = new Elysia()
       })
       .where(eq(backupPlan.id, plan.id));
 
-    return status(204);
+    return new Response(null, { status: 204 });
   })
   .post("/api/workers/backup-runs/claim", async ({ request, body, status }) => {
     const auth = await authenticateWorkerFromSyncToken(request.headers);
@@ -1356,7 +1357,7 @@ export const workerRoutes = new Elysia()
     }
 
     if (!completionRow.runGroupId) {
-      return status(204);
+      return new Response(null, { status: 204 });
     }
 
     await db.transaction(async (tx) => {
@@ -1418,7 +1419,7 @@ export const workerRoutes = new Elysia()
         .where(eq(backupPlan.id, completionRow.planId));
     });
 
-    return status(204);
+    return new Response(null, { status: 204 });
   })
   .post("/api/workers/:id/rotate-sync-token", async ({ request, params, status }) => {
     const user = await getAuthenticatedUser(request);
@@ -1447,8 +1448,8 @@ export const workerRoutes = new Elysia()
     const syncTokenHash = hashSyncToken(nextSyncToken);
 
     await db.$client.query(
-      `UPDATE "worker" SET "sync_token_hash" = $1, "updated_at" = NOW() WHERE "id" = $2`,
-      [syncTokenHash, existingWorker.id],
+      `UPDATE "worker" SET "sync_token_hash" = $1, "sync_token" = $2, "updated_at" = NOW() WHERE "id" = $3`,
+      [syncTokenHash, nextSyncToken, existingWorker.id],
     );
 
     logInfo("worker sync token rotated", { workerId: existingWorker.id, userId: user.id });

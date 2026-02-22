@@ -53,7 +53,7 @@ import { apiFetchJson } from "@/lib/api-fetch";
 import { deriveHealthStatus } from "@/lib/control-plane/health";
 import { formatBytes } from "@/lib/format-bytes";
 import { authClient } from "@/lib/auth-client";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries } from "@tanstack/react-query";
 import { Spinner } from "@/components/ui/spinner";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -960,7 +960,7 @@ export default function RepositoriesPage() {
 
   const storageBytesById = useQueries({
     queries: repositoriesWithTrackedStorage.map((r) => {
-      const remote = `glare-${r.id.replace(/-/g, "")}:${r.options["s3.bucket"]}`;
+      const remote = `glare-${r.id.slice(0, 8)}:${r.options["s3.bucket"]}`;
       return {
         queryKey: ["repo-storage", r.id],
         queryFn: () =>
